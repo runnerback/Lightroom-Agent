@@ -1,0 +1,4 @@
+**/_PRD
+
+__pycache__/
+*.pyc
