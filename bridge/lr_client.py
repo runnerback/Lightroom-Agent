@@ -6,7 +6,7 @@ commands go in on 50111 (one JSON object per line), responses come back on 50112
 
 Library use:
     from lr_client import LrBridge
-    with LrBridge() as lr:
+    with LrBridge(timeout=args.timeout) as lr:
         print(lr.ping())
         photos = lr.list_folder('/Volumes/T4/SynologyDrive/ALL-照片/2026/20261024-宝宝百天/jpg')
         lr.set_meta([{'path': p['path'], 'rating': 3} for p in photos[:5]])
@@ -18,10 +18,12 @@ CLI use:
     python3 lr_client.py export /tmp/out --folder "/Volumes/T4/.../jpg" --min-rating 3 --long-edge 2048
 """
 import argparse
+import fcntl
 import json
 import os
 import socket
 import sys
+import time
 import uuid
 
 HOST = '127.0.0.1'
@@ -34,25 +36,96 @@ class LrError(RuntimeError):
 
 
 class LrBridge:
-    def __init__(self, host=HOST, port_in=PORT_IN, port_out=PORT_OUT, timeout=600):
+    """One client at a time: a file lock serialises concurrent scripts, and the connection
+    order (commands port first, then responses port) lets the plugin recycle its response
+    socket for us. A ping handshake confirms the response channel really is ours."""
+
+    LOCK_PATH = os.path.expanduser('~/.pic_agent_lr_bridge.lock')
+
+    def __init__(self, host=HOST, port_in=PORT_IN, port_out=PORT_OUT, timeout=600, lock=True):
+        self.host, self.port_in, self.port_out = host, port_in, port_out
         self.timeout = timeout
+        self.inp = self.out = self.rf = None
+        self._lock = None
+        if lock:
+            self._lock = open(self.LOCK_PATH, 'w')
+            fcntl.flock(self._lock, fcntl.LOCK_EX)   # wait for any other bridge client to finish
         try:
-            # connect the response channel first so nothing is lost
-            self.out = socket.create_connection((host, port_out), timeout=5)
-            self.inp = socket.create_connection((host, port_in), timeout=5)
-        except OSError as e:
-            raise LrError(
-                f'无法连接 Lightroom 插件 {host}:{port_in}/{port_out}: {e}\n'
-                '请确认 Lightroom Classic 正在运行,且 Pic Agent Bridge 插件已添加并启用。') from e
-        self.out.settimeout(timeout)
-        self.rf = self.out.makefile('r', encoding='utf-8', newline='\n')
+            self._connect_in()
+        except LrError as e:
+            self.close()
+            raise LrError(f'{e}\n请确认 Lightroom Classic 正在运行,且 Pic Agent Bridge 插件已添加并启用。') from e
+        time.sleep(0.3)  # let the plugin notice the new command client and recycle its response socket
+        self._connect_out()
+        self._handshake()
+
+    def _connect_out(self):
+        last = None
+        for _ in range(10):
+            try:
+                if self.rf:
+                    self.rf.close()
+                if self.out:
+                    self.out.close()
+                self.out = socket.create_connection((self.host, self.port_out), timeout=5)
+                self.out.settimeout(self.timeout)
+                self.rf = self.out.makefile('r', encoding='utf-8', newline='\n')
+                return
+            except OSError as e:
+                last = e
+                time.sleep(0.3)
+        raise LrError(f'无法连接响应端口 {self.port_out}: {last}')
+
+    def _connect_in(self):
+        last = None
+        for _ in range(10):
+            try:
+                if self.inp:
+                    self.inp.close()
+                self.inp = socket.create_connection((self.host, self.port_in), timeout=5)
+                return
+            except OSError as e:
+                last = e
+                time.sleep(0.5)
+        raise LrError(f'无法连接命令端口 {self.port_in}: {last}')
+
+    def _handshake(self):
+        """Ping until a pong proves both channels are ours. Survives the plugin recycling
+        its sockets or being reloaded while we connect."""
+        for attempt in range(6):
+            try:
+                rid = self._send('ping', {})
+                resp = self._read_until(rid, timeout=3)
+            except (OSError, LrError):
+                resp = None
+            if resp is not None:
+                self.lightroom = resp.get('lightroom')
+                self.catalog = resp.get('catalog')
+                return
+            time.sleep(0.5)
+            if attempt >= 1:
+                self._connect_in()          # command channel may have been dropped too
+                time.sleep(0.3)
+            self._connect_out()
+        self.close()
+        raise LrError('与 Lightroom 插件握手失败:收不到响应。'
+                      '请在 Lightroom 菜单 图库 › 增效工具附加功能 › Pic Agent Bridge: 重启服务,然后重试。')
 
     def close(self):
-        for s in (getattr(self, 'rf', None), getattr(self, 'inp', None), getattr(self, 'out', None)):
+        for s in (self.rf, self.inp, self.out):
             try:
-                s.close()
+                if s:
+                    s.close()
             except Exception:
                 pass
+        self.rf = self.inp = self.out = None
+        if self._lock:
+            try:
+                fcntl.flock(self._lock, fcntl.LOCK_UN)
+                self._lock.close()
+            except Exception:
+                pass
+            self._lock = None
 
     def __enter__(self):
         return self
@@ -61,26 +134,46 @@ class LrBridge:
         self.close()
 
     # ------------------------------------------------------------ core
-    def call(self, cmd, timeout=None, **params):
+    def _send(self, cmd, params):
         rid = uuid.uuid4().hex[:8]
         line = json.dumps({'id': rid, 'cmd': cmd, 'params': params}, ensure_ascii=False)
         if '\n' in line:
             raise LrError('newline in request payload')
-        self.inp.sendall((line + '\n').encode('utf-8'))
-        self.out.settimeout(timeout or self.timeout)
+        try:
+            self.inp.sendall((line + '\n').encode('utf-8'))
+        except OSError as e:
+            raise LrError(f'命令通道已断开 ({e}),插件可能刚被重新载入,请重试') from e
+        return rid
+
+    def _read_until(self, rid, timeout):
+        """Read response lines until one carries `rid`. Returns its result, or None on timeout."""
+        self.out.settimeout(timeout)
         while True:
-            raw = self.rf.readline()
+            try:
+                raw = self.rf.readline()
+            except socket.timeout:
+                return None
             if not raw:
                 raise LrError('Lightroom 关闭了响应连接')
             raw = raw.strip()
             if not raw:
                 continue
-            resp = json.loads(raw)
+            try:
+                resp = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
             if resp.get('id') != rid:
                 continue  # response to an older request; ignore
             if not resp.get('ok'):
                 raise LrError(resp.get('error', 'unknown error'))
             return resp.get('result')
+
+    def call(self, cmd, timeout=None, **params):
+        rid = self._send(cmd, params)
+        result = self._read_until(rid, timeout or self.timeout)
+        if result is None:
+            raise LrError(f'{cmd} 在 {timeout or self.timeout}s 内没有返回')
+        return result
 
     @staticmethod
     def _chunks(seq, n):
@@ -102,6 +195,17 @@ class LrBridge:
     def ping(self):
         return self.call('ping')
 
+    def status(self):
+        return self.call('_status')
+
+    def reload_handlers(self):
+        """Hot-reload Handlers.lua inside Lightroom (no plugin reload needed)."""
+        return self.call('_reload')
+
+    def eval(self, code):
+        """Run a Lua snippet inside Lightroom; returns the list of returned values."""
+        return self.call('eval', code=code)['values']
+
     def catalog_info(self, count=False):
         return self.call('catalog_info', count=count)
 
@@ -110,6 +214,12 @@ class LrBridge:
 
     def list_collection(self, name):
         return self.call('list_collection', name=name)['photos']
+
+    def get_meta(self, paths):
+        return self.call('get_meta', paths=list(paths))['photos']
+
+    def collection_delete(self, name):
+        return self.call('collection_delete', name=name)
 
     def get_selection(self):
         return self.call('get_selection')['photos']
@@ -186,14 +296,20 @@ def _print(obj):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description='Pic Agent Lightroom bridge client')
+    ap.add_argument('--timeout', type=int, default=600, help='seconds to wait for a response (default 600)')
     sub = ap.add_subparsers(dest='cmd', required=True)
 
     sub.add_parser('ping')
+    sub.add_parser('status')
+    sub.add_parser('reload')
+    p = sub.add_parser('eval'); p.add_argument('code', help='Lua code; may use cat, json, H, cache, log, import')
     p = sub.add_parser('catalog-info'); p.add_argument('--count', action='store_true')
     p = sub.add_parser('list-folder'); p.add_argument('path'); p.add_argument('--children', action='store_true'); p.add_argument('--out')
     p = sub.add_parser('list-collection'); p.add_argument('name'); p.add_argument('--out')
     p = sub.add_parser('selection'); p.add_argument('--out')
     p = sub.add_parser('get-develop'); p.add_argument('path')
+    p = sub.add_parser('get-meta'); p.add_argument('paths', nargs='+')
+    p = sub.add_parser('collection-delete'); p.add_argument('name')
     p = sub.add_parser('select'); p.add_argument('paths', nargs='+')
     p = sub.add_parser('show-folder'); p.add_argument('path')
     p = sub.add_parser('show-collection'); p.add_argument('name')
@@ -222,6 +338,12 @@ def main(argv=None):
     with LrBridge() as lr:
         if args.cmd == 'ping':
             _print(lr.ping())
+        elif args.cmd == 'status':
+            _print(lr.status())
+        elif args.cmd == 'reload':
+            _print(lr.reload_handlers())
+        elif args.cmd == 'eval':
+            _print(lr.eval(args.code))
         elif args.cmd == 'catalog-info':
             _print(lr.catalog_info(count=args.count))
         elif args.cmd in ('list-folder', 'list-collection', 'selection'):
@@ -239,6 +361,10 @@ def main(argv=None):
                 _print(photos)
         elif args.cmd == 'get-develop':
             _print(lr.get_develop(args.path))
+        elif args.cmd == 'get-meta':
+            _print(lr.get_meta(args.paths))
+        elif args.cmd == 'collection-delete':
+            _print(lr.collection_delete(args.name))
         elif args.cmd == 'select':
             _print(lr.select(args.paths))
         elif args.cmd == 'show-folder':

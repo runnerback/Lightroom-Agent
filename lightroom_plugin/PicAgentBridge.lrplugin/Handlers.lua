@@ -5,10 +5,21 @@ local LrFileUtils = import 'LrFileUtils'
 local LrPathUtils = import 'LrPathUtils'
 local LrDate = import 'LrDate'
 
+local LrLogger = import 'LrLogger'
+local LrTasks = import 'LrTasks'
 local json = require 'json'
+
+-- Lightroom SDK calls (metadata reads, catalog lookups...) yield internally. Lua 5.1's plain pcall
+-- cannot yield across its C boundary ("Yielding is not allowed within a C or metamethod call"),
+-- so inside this module every pcall is the task-aware LrTasks.pcall.
+local pcall = LrTasks.pcall
+
+local log = LrLogger('PicAgentBridge')
+log:enable('logfile')
 
 local H = {}
 local cache = {} -- path | 'name:<file>' | 'uuid:<uuid>'  ->  LrPhoto
+local batchMeta, indexFolderOf -- defined below
 
 local function catalog() return LrApplication.activeCatalog() end
 local function leaf(path) return LrPathUtils.leafName(path) end
@@ -32,6 +43,10 @@ local function resolvePhoto(cat, item)
       if ok then ph = r end
     end
     if not ph then ph = cache['name:' .. leaf(item.path)] end
+    if not ph and indexFolderOf then
+      indexFolderOf(cat, item.path)
+      ph = cache[item.path] or cache['name:' .. leaf(item.path)]
+    end
   end
   if not ph and item.uuid then
     ph = cache['uuid:' .. item.uuid]
@@ -95,21 +110,124 @@ end
 local RAW_KEYS = { 'path', 'rating', 'pickStatus', 'colorNameForLabel', 'width', 'height', 'uuid', 'fileSize', 'isVirtualCopy' }
 local FMT_KEYS = { 'dateTimeOriginal', 'isoSpeedRating', 'aperture', 'shutterSpeed', 'focalLength', 'lens', 'cameraModel', 'keywordTags', 'copyName' }
 
--- Returns two accessor functions raw(ph,key), fmt(ph,key) backed by batch reads with per-photo fallback.
-local function batchMeta(cat, photos)
-  local okR, raw = pcall(cat.batchGetRawMetadata, cat, photos, RAW_KEYS)
-  local okF, fmt = pcall(cat.batchGetFormattedMetadata, cat, photos, FMT_KEYS)
-  if not okR or type(raw) ~= 'table' then raw = {} end
-  if not okF or type(fmt) ~= 'table' then fmt = {} end
-  local function get(ph, tbl, key, formatted)
-    local t = tbl[ph]
-    if t and t[key] ~= nil then return t[key] end
+-- Lightroom's batch metadata calls return a table keyed "by photo", but the keys are not
+-- guaranteed to be the very same Lua values we passed in. Re-key the result onto our objects
+-- via localIdentifier / uuid, and treat an empty result as a failure.
+local function normalizeBatch(res, photos)
+  if type(res) ~= 'table' then return nil end
+  local byId, byUuid = nil, nil
+  local function idIndex()
+    if not byId then
+      byId = {}
+      for _, p in ipairs(photos) do
+        local ok, id = pcall(function() return p.localIdentifier end)
+        if ok and id then byId[id] = p end
+      end
+    end
+    return byId
+  end
+  local function uuidIndex()
+    if not byUuid then
+      byUuid = {}
+      for _, p in ipairs(photos) do
+        local ok, u = pcall(p.getRawMetadata, p, 'uuid')
+        if ok and u then byUuid[u] = p end
+      end
+    end
+    return byUuid
+  end
+  local out, matched = {}, 0
+  for k, v in pairs(res) do
+    local ph = nil
+    local tk = type(k)
+    if tk == 'number' then
+      ph = idIndex()[k]
+    elseif tk == 'string' then
+      ph = uuidIndex()[k]
+    else
+      local ok, id = pcall(function() return k.localIdentifier end)
+      if ok and id then ph = idIndex()[id] end
+      if not ph then ph = k end
+    end
+    if ph then
+      out[ph] = v
+      matched = matched + 1
+    end
+  end
+  if matched == 0 then return nil end
+  return out
+end
+
+-- Batch-read metadata. If the whole-key-set call fails or comes back empty, retry key by key and
+-- drop keys this Lightroom version rejects, instead of falling back to thousands of per-photo calls.
+local function batchGet(cat, photos, keys, formatted)
+  local fn = formatted and cat.batchGetFormattedMetadata or cat.batchGetRawMetadata
+  if #photos == 0 then return {}, {} end
+  local ok, res = pcall(fn, cat, photos, keys)
+  local norm = ok and normalizeBatch(res, photos) or nil
+  if norm then
+    local known = {}
+    for _, k in ipairs(keys) do known[k] = true end
+    return norm, known
+  end
+  log:warn('batch metadata unusable (' .. tostring(ok and 'empty result' or res) .. '), retrying per key')
+  local merged, known = {}, {}
+  for _, k in ipairs(keys) do
+    local ok1, r1 = pcall(fn, cat, photos, { k })
+    local n1 = ok1 and normalizeBatch(r1, photos) or nil
+    if n1 then
+      known[k] = true
+      for ph, t in pairs(n1) do
+        merged[ph] = merged[ph] or {}
+        merged[ph][k] = t[k]
+      end
+    else
+      log:warn('metadata key unusable: ' .. k .. ' (' .. tostring(ok1 and 'empty' or r1) .. ')')
+    end
+  end
+  return merged, known
+end
+
+-- Returns two accessor functions raw(ph,key), fmt(ph,key). Keys the batch could not deliver
+-- fall back to per-photo reads.
+batchMeta = function(cat, photos)
+  local raw, rawKnown = batchGet(cat, photos, RAW_KEYS, false)
+  local fmt, fmtKnown = batchGet(cat, photos, FMT_KEYS, true)
+  local function get(ph, tbl, known, key, formatted)
+    if known[key] then
+      local t = tbl[ph]
+      if t ~= nil then return t[key] end
+    end
     local ok, v = pcall(formatted and ph.getFormattedMetadata or ph.getRawMetadata, ph, key)
     if ok then return v end
     return nil
   end
-  return function(ph, key) return get(ph, raw, key, false) end,
-         function(ph, key) return get(ph, fmt, key, true) end
+  return function(ph, key) return get(ph, raw, rawKnown, key, false) end,
+         function(ph, key) return get(ph, fmt, fmtKnown, key, true) end
+end
+
+-- Index every photo of the folder containing `path` into the cache (fallback for findPhotoByPath).
+local indexedFolders = {}
+indexFolderOf = function(cat, path)
+  local dir = LrPathUtils.parent(path)
+  if not dir or indexedFolders[dir] then return end
+  indexedFolders[dir] = true
+  local folder = findFolder(cat, dir)
+  if not folder then return end
+  local photos = folder:getPhotos(false)
+  local raw = batchMeta(cat, photos)
+  local n = 0
+  for _, ph in ipairs(photos) do
+    local p = raw(ph, 'path')
+    if p then n = n + 1 end
+    remember(ph, p, raw(ph, 'uuid'))
+  end
+  log:trace(string.format('indexed folder %s: %d photos, %d with path', dir, #photos, n))
+end
+
+local function labelOut(l)
+  if l == nil or l == 'grey' or l == 'gray' or l == 'none' or l == '' then return nil end
+  return l
 end
 
 local function describe(photos, cat)
@@ -121,7 +239,7 @@ local function describe(photos, cat)
     remember(ph, path, uuid)
     out[#out + 1] = {
       path = path, name = path and leaf(path) or nil, uuid = uuid,
-      rating = raw(ph, 'rating') or 0, pick = raw(ph, 'pickStatus') or 0, label = raw(ph, 'colorNameForLabel'),
+      rating = raw(ph, 'rating') or 0, pick = raw(ph, 'pickStatus') or 0, label = labelOut(raw(ph, 'colorNameForLabel')),
       width = raw(ph, 'width'), height = raw(ph, 'height'), size = raw(ph, 'fileSize'), virtual = raw(ph, 'isVirtualCopy'),
       datetime = fmt(ph, 'dateTimeOriginal'), iso = fmt(ph, 'isoSpeedRating'), aperture = fmt(ph, 'aperture'),
       shutter = fmt(ph, 'shutterSpeed'), focal = fmt(ph, 'focalLength'), lens = fmt(ph, 'lens'),
@@ -210,6 +328,12 @@ function H.list_collection(p)
   if not col then error('collection not found: ' .. tostring(p.name)) end
   local photos = col:getPhotos()
   return { collection = p.name, count = #photos, photos = describe(photos, cat) }
+end
+
+function H.get_meta(p)
+  local cat = catalog()
+  local photos, missing = resolveMany(cat, p.items or p.paths)
+  return { count = #photos, photos = describe(photos, cat), missing = missing }
 end
 
 function H.get_selection()
@@ -346,6 +470,14 @@ function H.collection_add(p)
   return { collection = p.name, set = p.set, added = #photos, missing = missing }
 end
 
+function H.collection_delete(p)
+  local cat = catalog()
+  local col = findCollection(cat, p.name)
+  if not col then error('collection not found: ' .. tostring(p.name)) end
+  withWrite(cat, 'Pic Agent: 删除收藏集', function() col:delete() end, 60)
+  return { deleted = p.name }
+end
+
 local presetCounter = 0
 local function applySettings(ph, settings, historyName)
   local ok = pcall(ph.applyDevelopSettings, ph, settings, historyName)
@@ -444,6 +576,28 @@ function H.export(p)
     requested = #photos, written = #files, dest = p.dest, files = files,
     missing = missing, seconds = LrDate.currentTime() - t0,
   }
+end
+
+---------------------------------------------------------------- diagnostics
+
+-- Run a Lua snippet inside Lightroom (localhost dev tool). The snippet sees `cat`, `json`, `H`, `cache`, `log`
+-- plus the plugin globals (`import`, `_PLUGIN`). Return values are JSON-encoded (userdata as strings).
+function H.eval(p)
+  if type(p.code) ~= 'string' then error('code required') end
+  local loader = loadstring or load
+  local chunk, err = loader(p.code, '=eval')
+  if not chunk then error('compile: ' .. tostring(err)) end
+  local env = setmetatable({ cat = catalog(), json = json, H = H, cache = cache, log = log }, { __index = _G })
+  if setfenv then setfenv(chunk, env) end
+  local results = { chunk() }
+  local out = json.array({})
+  for i = 1, table.maxn(results) do
+    local v = results[i]
+    local tv = type(v)
+    if tv == 'userdata' or tv == 'function' or tv == 'thread' then v = tostring(v) end
+    out[i] = v == nil and json.null or v
+  end
+  return { values = out }
 end
 
 return H
