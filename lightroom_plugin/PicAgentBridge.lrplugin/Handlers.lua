@@ -479,7 +479,16 @@ function H.collection_delete(p)
 end
 
 local presetCounter = 0
+-- Decoded JSON arrays carry a metatable; Lightroom's settings serializer rejects them ("Assertion failed: packed").
+local function plainCopy(v)
+  if type(v) ~= 'table' then return v end
+  local t = {}
+  for k, x in pairs(v) do t[k] = plainCopy(x) end
+  return t
+end
+
 local function applySettings(ph, settings, historyName)
+  settings = plainCopy(settings)
   local ok = pcall(ph.applyDevelopSettings, ph, settings, historyName)
   if ok then return true end
   presetCounter = presetCounter + 1
