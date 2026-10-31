@@ -20,7 +20,7 @@ def style_settings(styles, name):
     return {**{k: NEUTRAL.get(k, 0) for k in sorted(others)}, **styles[name]['settings']}
 
 
-CALIB_KEYS = ('Exposure2012', 'IncrementalTemperature', 'IncrementalTint', 'WhiteBalance')
+CALIB_KEYS = ('Exposure2012', 'IncrementalTemperature', 'IncrementalTint', 'Temperature', 'Tint', 'WhiteBalance', 'LuminanceSmoothing')
 
 
 def load_metrics(run_dir):
@@ -102,27 +102,62 @@ def export_one(lr, path, dest, long_edge):
 
 
 def wb_mode(adj):
-    """Incremental temp/tint only persist with WhiteBalance=Custom; with 'As Shot' Lightroom later resets them to 0."""
+    """WB offsets only persist with WhiteBalance=Custom; with 'As Shot' Lightroom later resets them."""
+    if 'Temperature' in adj:                     # raw: absolute Kelvin / tint are always explicit
+        return {'WhiteBalance': 'Custom'}
     return {'WhiteBalance': 'Custom'} if adj.get('IncrementalTemperature') or adj.get('IncrementalTint') else {'WhiteBalance': 'As Shot'}
 
 
-def step(adj, meas, tgt, max_ev):
-    """One proportional update. L* ~ Y^(1/3): stops = 3*log2(Lt/L), damped. Temp raises b*, tint raises a*."""
-    return {
-        'Exposure2012': round(max(-max_ev, min(max_ev, adj['Exposure2012'] + 0.8 * 3 * math.log2(tgt['L'] / meas['L']))), 2),
-        'IncrementalTemperature': int(max(-40, min(40, adj['IncrementalTemperature'] + round(1.2 * (tgt['b'] - meas['b']))))),
-        'IncrementalTint': int(max(-30, min(30, adj['IncrementalTint'] + round(1.0 * (tgt['a'] - meas['a']))))),
-    }
+def initial_adj(develop):
+    """Starting point for calibration. Raw files (ARW/DNG) carry absolute Temperature/Tint; JPGs only incremental offsets."""
+    if develop.get('Temperature') is not None:
+        return {'Exposure2012': 0.0, 'Temperature': int(develop['Temperature']), 'Tint': int(develop.get('Tint') or 0)}
+    return {'Exposure2012': 0.0, 'IncrementalTemperature': 0, 'IncrementalTint': 0}
 
 
-def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, history='Pic Agent'):
+def adj_text(adj):
+    if 'Temperature' in adj:
+        return 'EV {:+.2f} {}K t{:+d}'.format(adj['Exposure2012'], adj['Temperature'], adj['Tint'])
+    return 'EV {Exposure2012:+.2f} T {IncrementalTemperature:+d} t {IncrementalTint:+d}'.format(**adj)
+
+
+# WB axes: (adj key, Lab channel it drives, to/from a linear control variable, default gain per unit, clamp).
+# Raw temperature is controlled in log2(Kelvin) so the gain is roughly constant across the range.
+_AXES = {
+    'IncrementalTemperature': ('b', lambda v: v, lambda x: int(round(x)), 1 / 1.2, (-40, 40)),
+    'IncrementalTint': ('a', lambda v: v, lambda x: int(round(x)), 1.0, (-30, 30)),
+    'Temperature': ('b', math.log2, lambda x: int(round(2 ** x / 10) * 10), 40.0, (math.log2(2500), math.log2(12000))),
+    'Tint': ('a', lambda v: v, lambda x: int(round(x)), 0.4, (-60, 80)),
+}
+
+
+def step(adj, meas, tgt, max_ev, prev=None):
+    """One update toward the skin target. Exposure: L* ~ Y^(1/3) -> stops = 3*log2(Lt/L), damped.
+    WB: Newton step per axis, using the gain measured between the last two iterations (secant) when it is sane,
+    else a default gain; damped to avoid overshoot."""
+    new = {'Exposure2012': round(max(-max_ev, min(max_ev, adj['Exposure2012'] + 0.8 * 3 * math.log2(tgt['L'] / meas['L']))), 2)}
+    for key, (ch, fwd, back, g0, (lo, hi)) in _AXES.items():
+        if key not in adj:
+            continue
+        x = fwd(adj[key])
+        g = g0
+        if prev is not None and abs(x - fwd(prev['adj'][key])) > 1e-6:
+            gs = (meas[ch] - prev['meas'][ch]) / (x - fwd(prev['adj'][key]))
+            if 0.25 * g0 < gs < 4 * g0:          # same sign and plausible size
+                g = gs
+        new[key] = back(max(lo, min(hi, x + 0.85 * (tgt[ch] - meas[ch]) / g)))
+    return new
+
+
+def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, history='Pic Agent', start=None, extra=None):
     """Apply style, then iterate exposure/WB until the skin patch hits style['skin']. Leaves the final settings applied.
     box=None: detect the face on the first export (respects the user's crop/rotation); returns (None, hist) if none found.
+    start: initial adj (see initial_adj); extra: per-photo settings merged over the style (e.g. noise reduction).
     Returns (adj, hist); hist[-1]['meas'] is the measurement of the final settings."""
-    adj = {'Exposure2012': 0.0, 'IncrementalTemperature': 0, 'IncrementalTint': 0}
+    adj = dict(start or {'Exposure2012': 0.0, 'IncrementalTemperature': 0, 'IncrementalTint': 0})
     hist = []
     for it in range(iters + 1):
-        lr.apply_develop(paths=[path], settings={**style['settings'], **adj, **wb_mode(adj)}, history=history)
+        lr.apply_develop(paths=[path], settings={**style['settings'], **(extra or {}), **adj, **wb_mode(adj)}, history=history)
         f = export_one(lr, path, tmp, long_edge)
         if box is None:
             box, _ = detect_subject(f)
@@ -132,5 +167,5 @@ def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, his
         hist.append({'adj': dict(adj), 'meas': meas, 'box': list(box)})
         if it == iters:
             break
-        adj = step(adj, meas, style['skin'], max_ev)
+        adj = step(adj, meas, style['skin'], max_ev, hist[-2] if len(hist) > 1 else None)
     return adj, hist

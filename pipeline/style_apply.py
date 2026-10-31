@@ -7,7 +7,7 @@ Usage: style_apply.py <run_dir> <styles.json> <style> [--collection 百天-精�
        style_apply.py <run_dir> --rollback <style_applied/baseline.json>
 Output: <run_dir>/style_applied/<style>/{baseline.json, calib.json, thumbs/, overview_*.jpg}
 """
-import argparse, json, os, shutil, subprocess, sys
+import argparse, json, os, re, shutil, subprocess, sys
 from datetime import datetime
 here = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(here), 'bridge'))
@@ -40,6 +40,20 @@ tmp, thumbs = os.path.join(out, '_iter'), os.path.join(out, 'thumbs')
 touched = sorted(set(style['settings']) | set(CALIB_KEYS))
 
 
+def metrics_for(name):
+    """metrics.jsonl is keyed by the analysed JPG name; map ARW / DNG (e.g. 'JBZ04736-已增强-降噪.dng') onto it."""
+    m = re.match(r'([A-Za-z]+\d+)', name)
+    return metrics.get(m.group(1) + '.JPG') if m else None
+
+
+def noise_reduction(p, develop):
+    """Luminance NR for raw files by ISO; none for JPGs or for files already run through AI Denoise."""
+    if develop.get('Temperature') is None or '降噪' in p['name'] or 'Enhanced' in p['name']:
+        return {}
+    iso = int(re.sub(r'\D', '', str(p.get('iso') or '0')) or 0)
+    return {'LuminanceSmoothing': 10 if iso <= 1600 else 20 if iso <= 3200 else 30 if iso <= 6400 else 40}
+
+
 def when(m):
     return datetime.strptime(m['datetime'], '%Y:%m:%d %H:%M:%S').timestamp() + int(m.get('subsec') or 0) / 10 ** len(m.get('subsec') or '0')
 
@@ -51,7 +65,8 @@ with LrBridge() as lr:
     baseline = {}
     for p in photos:
         cur = lr.get_develop(p['path'])
-        baseline[p['path']] = {k: cur.get(k, DEFAULTS.get(k, 0)) for k in touched}
+        baseline[p['path']] = {k: v for k in touched if (v := cur.get(k, DEFAULTS.get(k, 0))) is not None}
+        p['develop'] = cur
     CROP = ('CropLeft', 'CropTop', 'CropRight', 'CropBottom', 'CropAngle', 'orientation')
     crops = {p['path']: {k: lr.get_develop(p['path']).get(k) for k in CROP} for p in photos}
     bpath = os.path.join(out, 'baseline.json')
@@ -62,29 +77,33 @@ with LrBridge() as lr:
     if a.reuse_calib:
         calib = json.load(open(os.path.join(out, 'calib.json'), encoding='utf-8'))
         for p in photos:
-            adj = calib[p['name']]['adj']
-            lr.apply_develop(paths=[p['path']], settings={**style['settings'], **adj, **style_lib.wb_mode(adj)}, history=f'Pic Agent: 风格 {a.style}')
+            adj, extra = calib[p['name']]['adj'], calib[p['name']].get('extra', {})
+            lr.apply_develop(paths=[p['path']], settings={**style['settings'], **extra, **adj, **style_lib.wb_mode(adj)}, history=f'Pic Agent: 风格 {a.style}')
         photos_to_calibrate = []
     else:
         photos_to_calibrate = photos
     # Faces are detected on the calibration exports themselves, so the user's crop / straighten is respected.
     for p in photos_to_calibrate:
-        adj, hist = style_lib.calibrate(lr, p['path'], None, style, tmp, a.iters, a.max_ev, a.calib_edge, f'Pic Agent: 风格 {a.style}')
+        extra = noise_reduction(p, p['develop'])
+        adj, hist = style_lib.calibrate(lr, p['path'], None, style, tmp, a.iters, a.max_ev, a.calib_edge, f'Pic Agent: 风格 {a.style}',
+                                        start=style_lib.initial_adj(p['develop']), extra=extra)
         if adj is None:
             pending.append(p); continue
-        calib[p['name']] = {'adj': adj, 'meas': hist[-1]['meas'], 'hist': hist, 'source': 'face'}
-        print(p['name'], 'face', adj, {k: round(v, 1) for k, v in hist[-1]['meas'].items()}, flush=True)
+        calib[p['name']] = {'adj': adj, 'extra': extra, 'meas': hist[-1]['meas'], 'hist': hist, 'source': 'face'}
+        print(p['name'], 'face', style_lib.adj_text(adj), extra, {k: round(v, 1) for k, v in hist[-1]['meas'].items()}, flush=True)
 
     # No usable face: borrow from the nearest calibrated frame in time.
     for p in pending:
-        t = when(metrics[p['name']]) if p['name'] in metrics else 0
-        donor = min(calib, key=lambda n: abs(when(metrics[n]) - t))
-        adj = calib[donor]['adj']
-        lr.apply_develop(paths=[p['path']], settings={**style['settings'], **adj, **style_lib.wb_mode(adj)}, history=f'Pic Agent: 风格 {a.style}')
-        calib[p['name']] = {'adj': adj, 'source': 'from ' + donor}
-        print(p['name'], 'from', donor, adj, flush=True)
+        t = when(metrics_for(p['name'])) if metrics_for(p['name']) else 0
+        donor = min((n for n in calib if metrics_for(n)), key=lambda n: abs(when(metrics_for(n)) - t))
+        adj, extra = calib[donor]['adj'], noise_reduction(p, p['develop'])
+        lr.apply_develop(paths=[p['path']], settings={**style['settings'], **extra, **adj, **style_lib.wb_mode(adj)}, history=f'Pic Agent: 风格 {a.style}')
+        calib[p['name']] = {'adj': adj, 'extra': extra, 'source': 'from ' + donor}
+        print(p['name'], 'from', donor, style_lib.adj_text(adj), flush=True)
 
     json.dump(calib, open(os.path.join(out, 'calib.json'), 'w'), ensure_ascii=False, indent=1)
+    for p in photos:
+        p.pop('develop', None)
     changed = [p['name'] for p in photos if {k: lr.get_develop(p['path']).get(k) for k in CROP} != crops[p['path']]]
     print('crop/orientation changed on:', changed or 'none', flush=True)
     shutil.rmtree(tmp, ignore_errors=True)
@@ -93,7 +112,7 @@ with LrBridge() as lr:
     print('overview export:', r['written'], 'files', flush=True)
 
 items = [{'name': p['name'], 'caption': ('' if calib[p['name']]['source'] == 'face' else '借 ') +
-          'EV {Exposure2012:+.2f} T {IncrementalTemperature:+d} t {IncrementalTint:+d}'.format(**calib[p['name']]['adj'])}
+          style_lib.adj_text(calib[p['name']]['adj'])}
          for p in photos]
 json.dump(items, open(os.path.join(out, 'overview.json'), 'w'), ensure_ascii=False)
 subprocess.run([sys.executable, '-I', os.path.join(here, 'contact_sheet.py'), out, out, '--from', os.path.join(out, 'overview.json'),
