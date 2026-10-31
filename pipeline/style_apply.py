@@ -3,7 +3,7 @@
 Photos without a measurable subject face inherit the calibration of the nearest calibrated photo in time
 (same scene and light). Settings stay applied; the previous values are saved for rollback.
 
-Usage: style_apply.py <run_dir> <styles.json> <style> [--collection 百天-精选] [--iters 3] [--max-ev 0.9] [--reuse-calib]
+Usage: style_apply.py <run_dir> <styles/STYLES.md> <style> [--collection 百天-精选] [--iters 3] [--max-ev 0.9] [--reuse-calib]
        style_apply.py <run_dir> --rollback <style_applied/baseline.json>
 Output: <run_dir>/style_applied/<style>/{baseline.json, calib.json, thumbs/, overview_*.jpg}
 """
@@ -17,7 +17,7 @@ import style_lib
 from style_lib import DEFAULTS, CALIB_KEYS
 
 ap = argparse.ArgumentParser()
-ap.add_argument('run_dir'); ap.add_argument('styles', nargs='?'); ap.add_argument('style', nargs='?')
+ap.add_argument('run_dir'); ap.add_argument('styles', nargs='?', default=style_lib.STYLES_DOC); ap.add_argument('style', nargs='?')
 ap.add_argument('--collection', default='百天-精选')
 ap.add_argument('--iters', type=int, default=3)
 ap.add_argument('--max-ev', type=float, default=0.9)
@@ -26,6 +26,8 @@ ap.add_argument('--rollback')
 ap.add_argument('--reuse-calib', action='store_true', help='re-apply adjustments from an existing calib.json instead of recalibrating')
 ap.add_argument('--refine', action='store_true', help='recalibrate, starting from the adjustments in an existing calib.json')
 ap.add_argument('--only', nargs='*', help='with --refine: recalibrate just these photo names, keep the rest of calib.json')
+ap.add_argument('--skin-wb', nargs='*', default=[], help='balance WB on skin for these photos even when they have white areas '
+                '(whites that are really cream clothes / beige sofa pull the whole frame too cool)')
 a = ap.parse_args()
 
 if a.rollback:
@@ -34,7 +36,7 @@ if a.rollback:
         print(lr.apply_develop(items=[{'path': p, 'settings': s} for p, s in base.items()], history='Pic Agent: 撤销风格'))
     sys.exit(0)
 
-styles = json.load(open(a.styles, encoding='utf-8'))
+styles = style_lib.load_styles(a.styles)
 style = dict(styles[a.style], settings=style_lib.style_settings(styles, a.style))
 metrics = style_lib.load_metrics(a.run_dir)
 out = os.path.abspath(os.path.join(a.run_dir, 'style_applied', a.style))
@@ -96,11 +98,13 @@ with LrBridge() as lr:
         # whatever an earlier run left applied.
         start = prev_calib[p['name']]['adj'] if p['name'] in prev_calib else style_lib.initial_adj(
             {**p['develop'], **json.load(open(bpath, encoding='utf-8')).get(p['path'], {})})
-        adj, hist = style_lib.calibrate(lr, p['path'], None, style, tmp, a.iters, a.max_ev, a.calib_edge, f'Pic Agent: 风格 {a.style}',
+        st = {k: v for k, v in style.items() if k != 'white'} if p['name'] in a.skin_wb else style
+        adj, hist = style_lib.calibrate(lr, p['path'], None, st, tmp, a.iters, a.max_ev, a.calib_edge, f'Pic Agent: 风格 {a.style}',
                                         start=start, extra=extra)
         if adj is None:
             pending.append(p); continue
-        calib[p['name']] = {'adj': adj, 'extra': extra, 'meas': hist[-1]['meas'], 'hist': hist, 'source': 'face'}
+        calib[p['name']] = {'adj': adj, 'extra': extra, 'meas': hist[-1]['meas'], 'hist': hist, 'source': 'face',
+                            'wb_on': 'skin' if st is not style else 'auto'}
         print(p['name'], 'face', style_lib.adj_text(adj), extra, {k: round(v, 1) for k, v in hist[-1]['meas'].items()}, flush=True)
 
     # No usable face: borrow from the nearest calibrated frame in time.

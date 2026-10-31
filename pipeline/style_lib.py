@@ -13,6 +13,33 @@ NEUTRAL = {'ToneCurvePV2012': [0, 0, 255, 255], 'GrainSize': 25, 'GrainFrequency
            'PostCropVignetteMidpoint': 50, 'PostCropVignetteFeather': 50, 'PostCropVignetteRoundness': 0}
 
 
+STYLES_DOC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'styles', 'STYLES.md')
+
+
+def load_styles(path=STYLES_DOC):
+    """Styles from styles/STYLES.md: each `## <name>` section holds one ```json block {desc, skin, [white], settings}.
+    Prose around the block is documentation only. A plain .json file of {name: style} is accepted too."""
+    if path.endswith('.json'):
+        styles = json.load(open(path, encoding='utf-8'))
+    else:
+        styles, name, block = {}, None, None
+        for line in open(path, encoding='utf-8'):
+            if line.startswith('# ') or line.startswith('## '):     # a top-level heading ends the style sections
+                name, block = (line[3:].strip() if line.startswith('## ') else None), None
+            elif name and line.strip() == '```json' and name not in styles:
+                block = []
+            elif block is not None and line.strip() == '```':
+                styles[name] = json.loads(''.join(block)); block = None
+            elif block is not None:
+                block.append(line)
+    for n, st in styles.items():
+        missing = [k for k in ('skin', 'settings') if k not in st] + [f'skin.{k}' for k in 'Lab' if k not in st.get('skin', {})]
+        missing += [f'white.{k}' for k in 'ab' if 'white' in st and k not in st['white']]
+        if missing:
+            raise ValueError(f'style {n}: missing {", ".join(missing)}')
+    return styles
+
+
 def style_settings(styles, name):
     """Settings for one style, with every key that *another* style sets reset to neutral, so switching styles
     never leaves leftovers (e.g. A's orange HSL under B)."""
@@ -215,3 +242,10 @@ def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, his
             break
         adj = step(adj, meas, style['skin'], max_ev, hist[-2] if len(hist) > 1 else None, style)
     return adj, hist
+
+
+if __name__ == '__main__':          # check the style document: style_lib.py [styles/STYLES.md]
+    import sys
+    for n, st in load_styles(*sys.argv[1:2]).items():
+        print(f"{n}: skin L{st['skin']['L']} a{st['skin']['a']} b{st['skin']['b']}",
+              f"white a{st['white']['a']} b{st['white']['b']}" if 'white' in st else 'white -', f"{len(st['settings'])} settings")

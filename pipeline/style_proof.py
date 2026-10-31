@@ -2,7 +2,7 @@
 """Render style proofs in Lightroom: apply each style to sample photos, calibrate exposure / WB so the subject's
 skin hits the style's Lab target, export, then restore the photos' original develop settings.
 
-Usage: style_proof.py <run_dir> <styles.json> --names JBZ04064.JPG ... [--folder <jpg dir>] [--iters 3] [--long-edge 1600]
+Usage: style_proof.py <run_dir> <styles/STYLES.md> --names JBZ04064.JPG ... [--folder <jpg dir>] [--iters 3] [--long-edge 1600]
 Output: <run_dir>/style_proofs/<style>/<name>.jpg, original/<name>.jpg, calib.json, compare_*.jpg
 """
 import argparse, json, os, shutil, sys
@@ -21,7 +21,7 @@ ap.add_argument('--long-edge', type=int, default=1600)
 ap.add_argument('--max-ev', type=float, default=0.9, help='cap on exposure push; side-lit faces would otherwise wash out the scene')
 a = ap.parse_args()
 
-styles = json.load(open(a.styles, encoding='utf-8'))
+styles = style_lib.load_styles(a.styles)
 metrics = style_lib.load_metrics(a.run_dir)
 out_root = os.path.abspath(os.path.join(a.run_dir, 'style_proofs'))
 tmp = os.path.join(out_root, '_iter')
