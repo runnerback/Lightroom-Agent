@@ -13,35 +13,68 @@ NEUTRAL = {'ToneCurvePV2012': [0, 0, 255, 255], 'GrainSize': 25, 'GrainFrequency
            'PostCropVignetteMidpoint': 50, 'PostCropVignetteFeather': 50, 'PostCropVignetteRoundness': 0}
 
 
-STYLES_DOC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'styles', 'STYLES.md')
+STYLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'styles')
+# Your own styles: kept outside the repository / plugin folder so updates never overwrite them. A style here with the
+# same name as a built-in one replaces it. LIGHTROOM_AGENT_STYLES may list more folders (os.pathsep-separated).
+USER_STYLES_DIR = os.path.join(os.environ.get('LIGHTROOM_AGENT_HOME', os.path.join(os.path.expanduser('~'), '.lightroom-agent')), 'styles')
 
 
-def load_styles(path=STYLES_DOC):
-    """Styles from styles/STYLES.md: each `## <name>` section holds one ```json block {desc, skin, [white], settings}.
-    Prose around the block is documentation only. A plain .json file of {name: style} is accepted too."""
-    if path.endswith('.json'):
+def style_dirs():
+    extra = [d for d in os.environ.get('LIGHTROOM_AGENT_STYLES', '').split(os.pathsep) if d]
+    return [STYLES_DIR, USER_STYLES_DIR, *extra]
+
+
+def _parse_style_md(path):
+    """One style per Markdown file: the first ```json block is {desc, skin, [white], settings}; the rest is prose."""
+    block = None
+    for line in open(path, encoding='utf-8'):
+        if block is None and line.strip() == '```json':
+            block = []
+        elif block is not None and line.strip() == '```':
+            return json.loads(''.join(block))
+        elif block is not None:
+            block.append(line)
+    raise ValueError(f'{path}: no ```json block')
+
+
+def style_files(path=None):
+    """{name: file} for every style. A style is styles/<Name>.md (name = file name; README*.md and _*.md are not
+    styles). path: a folder, a single style .md, or a .json of {name: style}; default: all of style_dirs()."""
+    files = {}
+    for d in ([path] if path else style_dirs()):
+        if os.path.isfile(d):
+            files[os.path.splitext(os.path.basename(d))[0]] = d
+        elif os.path.isdir(d):
+            for f in sorted(os.listdir(d)):
+                if f.endswith('.md') and not f.startswith(('_', '.')) and not f.upper().startswith('README'):
+                    files[f[:-3]] = os.path.join(d, f)
+    return files
+
+
+def load_styles(path=None):
+    """All styles, sorted by name. Raises ValueError naming the file of a malformed style."""
+    if path and path.endswith('.json'):
         styles = json.load(open(path, encoding='utf-8'))
     else:
-        styles, name, block = {}, None, None
-        for line in open(path, encoding='utf-8'):
-            if line.startswith('# ') or line.startswith('## '):     # a top-level heading ends the style sections
-                name, block = (line[3:].strip() if line.startswith('## ') else None), None
-            elif name and line.strip() == '```json' and name not in styles:
-                block = []
-            elif block is not None and line.strip() == '```':
-                styles[name] = json.loads(''.join(block)); block = None
-            elif block is not None:
-                block.append(line)
+        styles = {}
+        for n, f in sorted(style_files(path).items()):
+            try:
+                styles[n] = _parse_style_md(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(f'{f}: bad JSON: {e}') from None
     for n, st in styles.items():
         missing = [k for k in ('skin', 'settings') if k not in st] + [f'skin.{k}' for k in 'Lab' if k not in st.get('skin', {})]
         missing += [f'white.{k}' for k in 'ab' if 'white' in st and k not in st['white']]
         if missing:
             raise ValueError(f'style {n}: missing {", ".join(missing)}')
+        bad = [k for k in st['settings'] if k in FORBIDDEN or k.startswith('Crop')]
+        if bad:
+            raise ValueError(f'style {n}: {", ".join(bad)} must not be in a style (set per photo / never touched)')
     return styles
 
 
 def resolve_style(styles, name):
-    """Full style name, or its letter prefix ('D', 'd' -> 'D_富士胶片')."""
+    """Full style name, or its letter prefix ('D', 'd' -> 'D_Fuji_400H')."""
     if name in styles:
         return name
     hits = [n for n in styles if n.split('_')[0].lower() == name.lower()]
@@ -58,6 +91,7 @@ def style_settings(styles, name):
 
 
 CALIB_KEYS = ('Exposure2012', 'IncrementalTemperature', 'IncrementalTint', 'Temperature', 'Tint', 'WhiteBalance', 'LuminanceSmoothing')
+FORBIDDEN = set(CALIB_KEYS) | {'orientation'}
 
 
 def load_metrics(run_dir):
@@ -104,11 +138,17 @@ def measure(path, box):
 
 
 _fd = None
+# Which face is the subject when there are several: 'main' = the largest (portraits, street, events);
+# 'child' = the smallest face that is still >= 25% of the largest (a baby or child held by / next to adults).
+SUBJECT = os.environ.get('LIGHTROOM_AGENT_SUBJECT', 'main')
+# Faces narrower than this fraction of the frame are passers-by in a street or crowd scene: too small to measure skin
+# reliably, and not the subject. (Portrait / family frames: 8-50 %.)
+MIN_FACE = 0.04
 
 
 def detect_subject(path, min_score=0.7):
-    """Find the baby's face in an exported (cropped) image with YuNet, trying 0/90/270/180 degree turns.
-    Subject = smallest face that is at least 25% of the largest (same rule as analyze.py).
+    """Find the subject's face in an exported (cropped) image with YuNet, trying 0/90/270/180 degree turns.
+    Subject: see SUBJECT (same rule as analyze.py).
     Returns the central skin patch (x0, y0, x1, y1, rot_k) normalised to the turned image, and the face width fraction."""
     global _fd
     if _fd is None:
@@ -128,7 +168,7 @@ def detect_subject(path, min_score=0.7):
         _, faces = _fd.detect(r)
         lab = cv2.cvtColor(r, cv2.COLOR_BGR2LAB).astype(np.float32)
         for f in (faces if faces is not None else []):
-            if float(f[14]) < min_score or f[2] <= 12:
+            if float(f[14]) < min_score or f[2] <= 12 or f[2] / w < MIN_FACE:
                 continue
             # Balloons and plush toys have cartoon faces that YuNet happily detects; keep only skin-coloured ones.
             x0, y0 = int(f[0] + f[2] * 0.25), int(f[1] + f[3] * 0.35)
@@ -143,11 +183,17 @@ def detect_subject(path, min_score=0.7):
     if not cands:
         return None, 0
     # The same face shows up in several turns, and arms/hands give weak false hits: keep the confident ones,
-    # then take the smallest face that is still >= 25% of the largest (baby next to an adult).
+    # then pick the subject among them.
     top = max(c[0] for c in cands)
     cands = [c for c in cands if c[0] >= top - 0.12]
-    big = max(c[1] for c in cands)
-    _, _, k, f, w, h = min((c for c in cands if c[1] >= 0.25 * big), key=lambda c: (c[1], -c[0]))
+    # A face found upright is located best; the turned duplicates of the same face have looser boxes (and a larger one
+    # would win the 'main' rule). Turns only matter for faces that are actually sideways (lying down, rotated frame).
+    cands = [c for c in cands if c[2] == 0] or cands
+    if SUBJECT == 'child':
+        big = max(c[1] for c in cands)
+        _, _, k, f, w, h = min((c for c in cands if c[1] >= 0.25 * big), key=lambda c: (c[1], -c[0]))
+    else:
+        _, _, k, f, w, h = max(cands, key=lambda c: (c[1], c[0]))
     x, y, fw, fh = f[0] / w, f[1] / h, f[2] / w, f[3] / h
     cx, cy = x + fw / 2, y + fh * 0.55
     return tuple(float(v) for v in (cx - fw * 0.25, cy - fh * 0.2, cx + fw * 0.25, cy + fh * 0.2)) + (k,), float(fw)
@@ -214,7 +260,10 @@ def step(adj, meas, tgt, max_ev, prev=None, style=None):
     """One update toward the skin target. Exposure: L* ~ Y^(1/3) -> stops = 3*log2(Lt/L), damped.
     WB: Newton step per axis, using the gain measured between the last two iterations (secant) when it is sane,
     else a default gain; damped to avoid overshoot."""
-    new = {'Exposure2012': round(max(-max_ev, min(max_ev, adj['Exposure2012'] + 0.8 * 3 * math.log2(tgt['L'] / meas['L']))), 2)}
+    ev = adj['Exposure2012'] + 0.8 * 3 * math.log2(tgt['L'] / meas['L'])
+    if meas['clip_hi'] > tgt.get('clip_max', 100):   # brightening the face is blowing out shirts / sky: back off instead
+        ev = min(ev, adj['Exposure2012'] - 0.2)
+    new = {'Exposure2012': round(max(-max_ev, min(max_ev, ev)), 2)}
     if style is not None:
         tgt, wmeas, mode = _wb_view(style, meas)
         pmeas = _wb_view(style, prev['meas'])[1] if prev is not None and _wb_view(style, prev['meas'])[2] == mode else None
@@ -233,6 +282,8 @@ def step(adj, meas, tgt, max_ev, prev=None, style=None):
     return new
 
 
+CLIP_MIN = 1.0       # % of the frame allowed at >= 250 after calibration ...
+CLIP_EXTRA = 1.0     # ... or this much more than the photo had to begin with, whichever is larger
 DEPTH_FREE = 36      # L* gap between the brightest scene areas and the face that light skin normally shows
 DEPTH_GAIN = 0.8     # how much of any larger gap is kept (deeper skin stays deeper)
 MIN_SKIN_L = 40
@@ -264,16 +315,25 @@ def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, his
             if box is None:
                 return None, hist
         meas = measure(f, box)
-        if tgt is None:                          # skin depth is judged once, on the first render
-            tgt = skin_target(style, meas)
+        if tgt is None:                          # skin depth and the highlight budget are judged once, on the first render
+            tgt = dict(skin_target(style, meas), clip_max=max(CLIP_MIN, meas['clip_hi'] + CLIP_EXTRA))
         hist.append({'adj': dict(adj), 'meas': meas, 'box': list(box), 'skin_target': tgt})
         if it == iters:
             break
         adj = step(adj, meas, tgt, max_ev, hist[-2] if len(hist) > 1 else None, style)
-    return adj, hist
+    # WB moves also shift skin lightness, so the last iteration is not always the closest: keep the best one.
+    def err(h):
+        wt, wm, _ = _wb_view(style, h['meas'])
+        over = max(0.0, h['meas']['clip_hi'] - tgt['clip_max'])
+        return abs(h['meas']['L'] - tgt['L']) / 2 + abs(wm['a'] - wt['a']) + abs(wm['b'] - wt['b']) + 4 * over
+    best = min(hist, key=err)
+    if best is not hist[-1]:
+        lr.apply_develop(paths=[path], settings={**style['settings'], **(extra or {}), **best['adj'], **wb_mode(best['adj'])}, history=history)
+        hist.append(dict(best))                  # hist[-1] stays "the settings left applied"
+    return best['adj'], hist
 
 
-if __name__ == '__main__':          # check the style document: style_lib.py [styles/STYLES.md]
+if __name__ == '__main__':          # check the styles: style_lib.py [folder or style file]
     import sys
     for n, st in load_styles(*sys.argv[1:2]).items():
         print(f"{n}: skin L{st['skin']['L']} a{st['skin']['a']} b{st['skin']['b']}",

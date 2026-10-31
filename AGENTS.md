@@ -14,4 +14,5 @@ If the user asks you to change this project's code:
 - `bridge/lr_client.py` — Python client for the plugin's localhost socket protocol (stdlib only).
 - `pipeline/` — `cli.py` (entry point), `mcp_server.py`, culling (`analyze.py`, `cull.py`), styles (`style_lib.py`,
   `style_apply.py`), sheets (`contact_sheet.py`, `check_boxes.py`).
-- `styles/STYLES.md` — the single source of truth for styles (prose + one ```json block per style).
+- `styles/` — one Markdown file per style (prose + one ```json block); guide in `styles/README.md`. Users' own
+  styles live in `~/.lightroom-agent/styles/`.

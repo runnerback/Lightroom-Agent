@@ -8,7 +8,7 @@
   lightroom-agent cull    --collection C | --folder F [--run DIR]   technical culling + contact sheets
   lightroom-agent pick    --run DIR --names a b ... --collection NAME   ratings / flags + picks collection
   lightroom-agent collect NAME --collection C --names a b ...        small collection (e.g. proofs) from named photos
-  lightroom-agent styles                         styles defined in styles/STYLES.md
+  lightroom-agent styles                         list and validate styles (styles/*.md, ~/.lightroom-agent/styles/*.md)
   lightroom-agent apply-style STYLE --collection C [--run DIR] [...]   per-photo calibrated colour grade
   lightroom-agent rollback [STYLE] --collection C [--run DIR]         undo: to the original state, or to before STYLE
   lightroom-agent check-boxes STYLE --collection C [--run DIR]        QA sheet of the face patches used
@@ -108,10 +108,10 @@ def cmd_doctor(args):
         import style_lib
         check(f'styles: {", ".join(style_lib.load_styles())}', True)
     except Exception as e:
-        check('styles/STYLES.md', False, str(e))
+        check('styles', False, str(e))
     md = modules_dir()
     installed = md and PLUGIN_SRC and os.path.isdir(os.path.join(md, os.path.basename(PLUGIN_SRC)))
-    print(f'  info plugin in Lightroom Modules folder: {"yes" if installed else "no"} ({md})')
+    print(f'  info plugin in Lightroom Modules folder: {"yes" if installed else "no (fine if added with File > Plug-in Manager)"} ({md})')
     try:
         with LrBridge(timeout=10) as lr:
             r = lr.ping()
@@ -145,6 +145,7 @@ def cmd_catalog(args):
 def cmd_photos(args):
     with LrBridge() as lr:
         photos, _ = source_photos(lr, args)
+    photos.sort(key=lambda p: (p.get('time') or 0, p['name']))    # capture order (name order without EXIF dates)
     for p in photos:
         print(f'{p["name"]:<34} {p.get("format") or "":<5} rating {p.get("rating", 0)} pick {p.get("pick", 0):>2} '
               f'{p.get("iso") or "":<9} {p.get("datetime") or ""}')
@@ -260,7 +261,8 @@ def cmd_styles(args):
         w = st.get('white')
         print(f'{n}: {st.get("desc", "")}\n    skin L{st["skin"]["L"]} a{st["skin"]["a"]} b{st["skin"]["b"]}'
               + (f', white a{w["a"]} b{w["b"]}' if w else ''))
-    summary({'styles': list(styles), 'doc': style_lib.STYLES_DOC})
+    summary({'styles': {n: f for n, f in style_lib.style_files().items() if n in styles}, 'guide': os.path.join(style_lib.STYLES_DIR, 'README.md'),
+             'user_styles_dir': style_lib.USER_STYLES_DIR})
 
 
 def style_dir(args):
@@ -271,7 +273,7 @@ def style_dir(args):
 
 def cmd_apply_style(args, rest):
     run = run_dir(args, args.collection)
-    script('style_apply.py', run, os.path.join(ROOT, 'styles', 'STYLES.md'), args.style, '--collection', args.collection, *rest)
+    script('style_apply.py', run, args.style, '--collection', args.collection, *rest)
 
 
 def cmd_rollback(args):
@@ -354,7 +356,7 @@ def main(argv=None):
     sub.add_parser('status')
     sub.add_parser('catalog')
     src(sub.add_parser('photos'))
-    p = sub.add_parser('cull'); src(p); p.add_argument('--run'); p.add_argument('--workers', type=int, default=max(2, (os.cpu_count() or 4) - 2))
+    p = cull_p = sub.add_parser('cull'); src(p); p.add_argument('--run'); p.add_argument('--workers', type=int, default=max(2, (os.cpu_count() or 4) - 2))
     p.add_argument('--gap', type=float); p.add_argument('--hamming', type=int); p.add_argument('--keep-per-group', type=int)
     p = sub.add_parser('pick'); p.add_argument('--run', required=True); p.add_argument('--names', nargs='*')
     p.add_argument('--names-file'); p.add_argument('--all-keeps', action='store_true')
@@ -366,9 +368,14 @@ def main(argv=None):
     p = sub.add_parser('collect'); p.add_argument('name'); src(p); p.add_argument('--names', nargs='+', required=True)
     p.add_argument('--set', default='Lightroom Agent')
     sub.add_parser('styles')
+    subject_help = ("which face is the subject when there are several: 'main' = the largest (default); "
+                    "'child' = a baby/child held by or next to adults")
+    cull_p.add_argument('--subject', choices=('main', 'child'), help=subject_help)
     for name in ('apply-style', 'rollback', 'check-boxes'):
         p = sub.add_parser(name); p.add_argument('style', nargs='?' if name == 'rollback' else None)
         p.add_argument('--collection', required=True); p.add_argument('--run')
+        if name != 'rollback':
+            p.add_argument('--subject', choices=('main', 'child'), help=subject_help)
     p = sub.add_parser('import'); p.add_argument('paths', nargs='+'); p.add_argument('--collection'); p.add_argument('--set', default='Lightroom Agent')
     p = sub.add_parser('export'); p.add_argument('--collection', required=True); p.add_argument('--dest', required=True)
     p.add_argument('--long-edge', type=int); p.add_argument('--quality', type=int, default=90)
@@ -376,6 +383,8 @@ def main(argv=None):
     sub.add_parser('mcp')
 
     args, rest = ap.parse_known_args(argv)
+    if getattr(args, 'subject', None):          # read by analyze.py / style_lib.py, also in the scripts run below
+        os.environ['LIGHTROOM_AGENT_SUBJECT'] = args.subject
     if rest and args.cmd != 'apply-style':
         ap.error('unrecognized arguments: ' + ' '.join(rest))
     try:

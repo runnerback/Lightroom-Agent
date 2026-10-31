@@ -1,4 +1,4 @@
--- Server.lua : local TCP bridge between Lightroom Classic and the Pic Agent scripts.
+-- Server.lua : local TCP bridge between Lightroom Classic and the Lightroom Agent scripts.
 -- Commands arrive on PORT_IN (one JSON object per line); responses go out on PORT_OUT.
 --
 -- Protocol notes (learned the hard way):
@@ -22,13 +22,13 @@ local LrPathUtils = import 'LrPathUtils'
 
 local json = require 'json'
 
-local log = LrLogger('PicAgentBridge')
+local log = LrLogger('LightroomAgent')
 log:enable('logfile')
 
 local prefs = LrPrefs.prefsForPlugin()
 
 local M = {
-  VERSION = '0.2.2',
+  VERSION = '0.1.0',               -- keep in step with Info.lua and .claude-plugin/plugin.json
   PORT_IN = 50111,
   PORT_OUT = 50112,
   running = false,
@@ -210,7 +210,7 @@ function M.start()
   M.generation = prefs.generation
 
   LrTasks.startAsyncTask(function()
-    LrFunctionContext.callWithContext('PicAgentBridgeServer', function(context)
+    LrFunctionContext.callWithContext('LightroomAgentServer', function(context)
       -- give an older instance (plugin reload) time to notice the new generation and close its ports
       if hadPrevious then LrTasks.sleep(1.5) end
 
@@ -295,10 +295,10 @@ end
 function M.statusText()
   local up = M.startedAt and (LrDate.currentTime() - M.startedAt) or 0
   return string.format(
-    'Pic Agent Bridge %s (gen %d)\n状态: %s\n命令端口 %d: %s\n响应端口 %d: %s\n已接收 %d / 已处理 %d / 失败 %d\n运行 %d 秒\n日志: ~/Library/Logs/Adobe/Lightroom/LrClassicLogs/PicAgentBridge.log',
-    M.VERSION, M.generation, M.running and '运行中' or '已停止',
-    M.PORT_IN, M.cmdConnected and '客户端已连接' or '等待连接',
-    M.PORT_OUT, M.sendConnected and '客户端已连接' or '等待连接',
+    'Lightroom Agent %s (gen %d)\nState: %s\nCommand port %d: %s\nResponse port %d: %s\nReceived %d / handled %d / failed %d\nUp %d s\nLog: LrClassicLogs/LightroomAgent.log',
+    M.VERSION, M.generation, M.running and 'running' or 'stopped',
+    M.PORT_IN, M.cmdConnected and 'client connected' or 'waiting',
+    M.PORT_OUT, M.sendConnected and 'client connected' or 'waiting',
     M.stats.received, M.stats.handled, M.stats.errors, up)
 end
 

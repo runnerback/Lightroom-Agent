@@ -69,7 +69,8 @@ def _detect_faces_once(rgb, min_score=0.7):
                 x, y, fw, fh = f[0] / scale, f[1] / scale, f[2] / scale, f[3] / scale
                 x0, y0 = max(0, int(x)), max(0, int(y))
                 x1, y1 = min(w, int(x + fw)), min(h, int(y + fh))
-                if x1 - x0 > 8 and y1 - y0 > 8:
+                # faces under MIN_FACE of the frame width are passers-by (street, crowds): judge the frame without them
+                if x1 - x0 > 8 and y1 - y0 > 8 and (x1 - x0) / w >= MIN_FACE:
                     out.append((x0, y0, x1, y1, float(f[14])))
         if out:
             out.sort(key=lambda r: -(r[2] - r[0]) * (r[3] - r[1]))
@@ -78,7 +79,7 @@ def _detect_faces_once(rgb, min_score=0.7):
 
 
 def _detect_faces(rgb):
-    """Try the upright image first, then rotated copies (babies lie in every direction).
+    """Try the upright image first, then rotated copies (people lying down, rotated frames).
     Returns (faces, rotated_rgb, rotation_degrees)."""
     for k in (0, 1, 3, 2):            # 0, 90, 270, 180 degrees
         r = rgb if k == 0 else np.ascontiguousarray(np.rot90(rgb, k))
@@ -125,12 +126,18 @@ def _face_metrics(rgb, gray, box):
     return m
 
 
+SUBJECT = os.environ.get('LIGHTROOM_AGENT_SUBJECT', 'main')
+MIN_FACE = 0.04     # same as style_lib.MIN_FACE
+
+
 def _pick_subject(faces):
-    """The baby is the subject. With several faces the baby's head is normally the smaller one,
-    so take the smallest face that is still at least 25% of the largest (ignores tiny false hits)."""
+    """'main' (default): the largest face. 'child': a baby/child next to adults is normally the smaller head, so take
+    the smallest face that is still at least 25% of the largest (ignores tiny false hits)."""
     if not faces:
         return None
-    big = faces[0]['frac']
+    if SUBJECT != 'child':
+        return max(range(len(faces)), key=lambda i: faces[i]['frac'])
+    big = max(f['frac'] for f in faces)
     cands = [i for i, f in enumerate(faces) if f['frac'] >= 0.25 * big]
     return min(cands, key=lambda i: faces[i]['frac'])
 
@@ -216,7 +223,7 @@ def analyze_one(path, thumb_dir):
         rec['sharp_global_n'] = _sharp_norm(gray, 1024)
         rec['dhash'] = _dhash(gray)
 
-        # faces: metrics for every face, then pick the subject (baby)
+        # faces: metrics for every face, then pick the subject
         boxes, rgb_r, rot = _detect_faces(rgb)
         gray_r = gray if rot == 0 else np.ascontiguousarray(np.rot90(gray, rot // 90))
         faces = [_face_metrics(rgb_r, gray_r, b) for b in boxes]

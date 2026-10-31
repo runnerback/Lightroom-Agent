@@ -49,6 +49,8 @@ Work files go to `~/Pictures/Lightroom Agent/<collection or folder>/` (override 
 ```bash
 lightroom-agent cull --folder "/path/in/catalog" [--recursive]     # or --collection NAME
 ```
+- **Subject:** with several faces the largest is the subject (`--subject main`, default). For family / baby shoots
+  where the child is held by or next to adults, add `--subject child` to `cull`, `apply-style` and `check-boxes`.
 - Technical pass only, writes nothing to Lightroom: face sharpness relative to neighbouring frames, closed eyes,
   exposure, burst/near-duplicate grouping (keeps the best of each burst). RAW files are previewed through Lightroom
   (with the user's crop), JPGs are read directly.
@@ -67,14 +69,16 @@ the reject flag and other keeps 1★ (`--no-mark-others` to leave them alone; `-
 ## 4. Colour styles
 
 ```bash
-lightroom-agent styles                          # names, descriptions, targets (styles/STYLES.md)
+lightroom-agent styles                          # names, descriptions, targets, files
 lightroom-agent collect "Wedding proofs" --collection "Wedding picks" --names IMG_0012 IMG_0230 IMG_0301
 lightroom-agent apply-style D --collection "Wedding proofs"          # letter or full name
 lightroom-agent apply-style D --collection "Wedding picks" --max-ev 1.5 --iters 4   # RAW shoots
 ```
 - Each photo is calibrated on the subject's face: exposure so the skin reaches the style's lightness (lowered
   automatically for deeper skin tones), white balance on neutral whites in the frame (sheets, clothes) or on skin.
-  Photos without a usable face borrow the calibration of the nearest photo in time.
+  Photos without a usable face borrow the calibration of the nearest face photo taken within 30 min
+  (`--borrow-window`); landscapes and other faceless photos with no such neighbour keep the camera's exposure / white
+  balance and only get the look.
 - **Proof first:** put 2–3 representative photos (different scenes/light) in a proof collection, apply 1–4 candidate
   styles, show the user the overview sheets, then style the whole collection.
 - Defaults: `--max-ev 0.9 --iters 3` (JPG). For RAW use `--max-ev 1.5 --iters 4`.
@@ -95,7 +99,7 @@ After `apply-style`, using its SUMMARY:
 2. **Look at every `overview_*.jpg`**: skin natural and consistent across the set, whites not pink/green/yellow,
    no washed-out or muddy frames, highlights not blown. Name the photos that look off.
 3. `lightroom-agent check-boxes D --collection C` → look at `boxes.jpg`: the **red box must sit on the main
-   subject's face** (not a balloon, toy, hand, or an adult's face when the baby is the subject). Re-calibrate wrong
+   subject's face** (not a balloon, poster, hand, or a passer-by's face). Re-calibrate wrong
    ones with `--refine --only ...`.
 4. `exposure_capped`: those photos hit `--max-ev`; their face may stay a bit dark — mention it.
 5. High ISO (≥ 6400): suggest Lightroom AI Denoise for photos that will be printed/enlarged.
@@ -104,11 +108,13 @@ After `apply-style`, using its SUMMARY:
 
 ## 6. Adding or changing a style
 
-Styles live in `styles/STYLES.md` (one `## Name` section each, the first ```json block is the parameters, the rest is
-documentation). Copy the closest style, adjust `skin` (L/a/b target), `white` (a/b of neutral whites, b≈1.5 clean,
-≈5 creamy) and `settings` (Lightroom develop keys: Basic, HSL, ColorGrading/SplitToning, Calibration, ToneCurvePV2012,
-Grain, Vignette). Never put white balance, exposure or crop keys in a style. Validate with
-`python3 pipeline/style_lib.py` (or `lightroom-agent styles`), proof on 2–3 photos, and document the look in prose.
+Each style is one Markdown file: built-in ones in the repository's `styles/`, the user's own in
+`~/.lightroom-agent/styles/<Letter>_<Name>.md` (survives updates; same name overrides a built-in). The first ```json
+block holds the parameters, the rest documents the look. To add one, copy `styles/_template.md` or the closest style into
+the user folder, adjust `skin` (L/a/b target), `white` (a/b of neutral whites, b≈1.5 clean, ≈5 creamy) and `settings`
+(Lightroom develop keys: Basic, HSL, ColorGrading/SplitToning, Calibration, ToneCurvePV2012, Grain, Vignette), and
+describe the look in prose. Never put white balance, exposure or crop keys in a style. Validate with
+`lightroom-agent styles`, proof on 2–3 photos. Full guide: `styles/README.md`.
 
 ## 7. Other commands
 

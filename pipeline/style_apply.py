@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Apply one style to every photo of a Lightroom collection, with per-photo skin calibration of exposure / WB.
 Photos without a measurable subject face inherit the calibration of the nearest calibrated photo in time
-(same scene and light). Settings stay applied; the previous values are saved for rollback.
+(same scene and light, within --borrow-window minutes). Settings stay applied; the previous values are saved for rollback.
 Crop, straighten and orientation are never touched.
 
-Usage: style_apply.py <run_dir> <styles/STYLES.md> <style> --collection <name> [--iters 3] [--max-ev 0.9] [--reuse-calib]
+Usage: style_apply.py <run_dir> <style> --collection <name> [--iters 3] [--max-ev 0.9] [--reuse-calib] [--styles DIR|FILE]
        style_apply.py <run_dir> --rollback <style_applied/<style>/baseline.json | style_applied/original.json>
-<style> is the full name from STYLES.md or its letter (A, B, C, D ...).
+<style> is a style name (styles/<name>.md, or your own in ~/.lightroom-agent/styles/) or its letter (A, B, C, D ...).
 Output: <run_dir>/style_applied/<style>/{baseline.json, calib.json, summary.json, thumbs/, overview_*.jpg}
 """
 import argparse, json, os, re, shutil, subprocess, sys
@@ -18,7 +18,8 @@ import style_lib
 from style_lib import DEFAULTS, CALIB_KEYS
 
 ap = argparse.ArgumentParser()
-ap.add_argument('run_dir'); ap.add_argument('styles', nargs='?', default=style_lib.STYLES_DOC); ap.add_argument('style', nargs='?')
+ap.add_argument('run_dir'); ap.add_argument('style', nargs='?')
+ap.add_argument('--styles', help='style folder or file (default: styles/ plus ~/.lightroom-agent/styles/)')
 ap.add_argument('--collection', help='Lightroom collection whose photos get the style')
 ap.add_argument('--iters', type=int, default=3)
 ap.add_argument('--max-ev', type=float, default=0.9)
@@ -29,6 +30,8 @@ ap.add_argument('--refine', action='store_true', help='recalibrate, starting fro
 ap.add_argument('--only', nargs='*', help='with --refine: recalibrate just these photo names, keep the rest of calib.json')
 ap.add_argument('--skin-wb', nargs='*', default=[], help='balance WB on skin for these photos even when they have white areas '
                 '(whites that are really cream clothes / beige sofa pull the whole frame too cool)')
+ap.add_argument('--borrow-window', type=float, default=30, help='minutes: a photo without a face borrows the calibration of '
+                'a face photo taken at most this long before/after it (same scene and light); otherwise keeps its own exposure / WB')
 ap.add_argument('--no-overview', action='store_true', help='skip the 800px overview export and contact sheets')
 a = ap.parse_args()
 
@@ -66,7 +69,9 @@ with LrBridge() as lr:
     baseline = {}
     for p in photos:
         cur = lr.get_develop(p['path'])
-        baseline[p['path']] = {k: v for k in touched if (v := cur.get(k, DEFAULTS.get(k, 0))) is not None}
+        # JPG / TIFF have no absolute Temperature / Tint: never store a 0 for them (Lightroom then renders 0 K and
+        # ignores later WB changes); an absent key stays absent.
+        baseline[p['path']] = {k: v for k in touched if (v := cur.get(k, None if k in ('Temperature', 'Tint') else DEFAULTS.get(k, 0))) is not None}
         p['develop'] = cur
     CROP = ('CropLeft', 'CropTop', 'CropRight', 'CropBottom', 'CropAngle', 'orientation')
     crops = {p['path']: {k: p['develop'].get(k) for k in CROP} for p in photos}
@@ -125,8 +130,8 @@ with LrBridge() as lr:
     donors = [n for n, v in calib.items() if v.get('source') == 'face' and v.get('time') is not None]
     for p in pending:
         extra = noise_reduction(p, p['develop'])
-        if donors and p.get('time') is not None:
-            donor = min(donors, key=lambda n: abs(calib[n]['time'] - p['time']))
+        donor = min(donors, key=lambda n: abs(calib[n]['time'] - p['time'])) if donors and p.get('time') is not None else None
+        if donor and abs(calib[donor]['time'] - p['time']) <= a.borrow_window * 60:
             adj, source = calib[donor]['adj'], 'from ' + donor
         else:
             adj, source = style_lib.initial_adj({**p['develop'], **baseline[p['path']]}), 'no face'

@@ -264,7 +264,7 @@ class LrBridge:
             self._merge(acc, self.call('add_keywords', items=part))
         return acc
 
-    def collection_add(self, name, paths, set_name='Pic Agent', replace=False, show=False):
+    def collection_add(self, name, paths, set_name='Lightroom Agent', replace=False, show=False):
         return self.call('collection_add', name=name, paths=list(paths), set=set_name, replace=replace, show=show)
 
     def apply_develop(self, items=None, paths=None, settings=None, history=None, chunk=50):
@@ -307,7 +307,7 @@ def _print(obj):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description='Pic Agent Lightroom bridge client')
+    ap = argparse.ArgumentParser(description='Lightroom Agent bridge client')
     ap.add_argument('--timeout', type=int, default=600, help='seconds to wait for a response (default 600)')
     sub = ap.add_subparsers(dest='cmd', required=True)
 
@@ -334,7 +334,7 @@ def main(argv=None):
     p = sub.add_parser('keywords'); p.add_argument('--from', dest='from_file'); p.add_argument('--paths', nargs='*'); p.add_argument('--add', nargs='*', default=[])
 
     p = sub.add_parser('collection'); p.add_argument('name'); p.add_argument('--from', dest='from_file'); p.add_argument('--paths', nargs='*')
-    p.add_argument('--set', default='Pic Agent'); p.add_argument('--replace', action='store_true'); p.add_argument('--show', action='store_true')
+    p.add_argument('--set', default='Lightroom Agent'); p.add_argument('--replace', action='store_true'); p.add_argument('--show', action='store_true')
 
     p = sub.add_parser('apply-develop'); p.add_argument('--from', dest='from_file', help='JSON list of {path, settings}')
     p.add_argument('--paths', nargs='*'); p.add_argument('--settings', help='JSON object applied to all'); p.add_argument('--history')

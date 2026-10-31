@@ -68,7 +68,7 @@ def main():
     ap.add_argument('--no-path', action='store_true', help='do not put lightroom-agent on PATH')
     a = ap.parse_args()
 
-    step('Python environment (first run downloads ~150 MB of packages)')
+    step('Python environment (first run downloads Python packages, ~400 MB on disk)')
     if run(LAUNCHER, 'doctor') not in (0, 1):     # 1 = some check failed, e.g. Lightroom not running yet: fine here
         sys.exit('environment setup failed; see the messages above')
 

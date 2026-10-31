@@ -14,7 +14,7 @@ local json = require 'json'
 -- so inside this module every pcall is the task-aware LrTasks.pcall.
 local pcall = LrTasks.pcall
 
-local log = LrLogger('PicAgentBridge')
+local log = LrLogger('LightroomAgent')
 log:enable('logfile')
 
 local H = {}
@@ -309,7 +309,7 @@ function H.ping(_, server)
   local cat = catalog()
   return {
     pong = true,
-    plugin = 'Pic Agent Bridge',
+    plugin = 'Lightroom Agent',
     version = server and server.VERSION or '?',
     lightroom = LrApplication.versionString(),
     catalog = cat:getPath(),
@@ -417,7 +417,7 @@ function H.set_meta(p)
   local cat = catalog()
   local items = p.items or {}
   local updated, missing, errors = 0, json.array({}), json.array({})
-  withWrite(cat, p.history or 'Pic Agent: 元数据', function()
+  withWrite(cat, p.history or 'Lightroom Agent: metadata', function()
     for _, it in ipairs(items) do
       local ph = resolvePhoto(cat, it)
       if not ph then
@@ -447,11 +447,11 @@ function H.add_keywords(p)
     for _, k in ipairs(it.keywords or {}) do names[k] = true end
   end
   local kws = {}
-  withWrite(cat, 'Pic Agent: 创建关键字', function()
+  withWrite(cat, 'Lightroom Agent: create keywords', function()
     for name in pairs(names) do kws[name] = cat:createKeyword(name, {}, true, nil, true) end
   end, 60)
   local added, missing = 0, json.array({})
-  withWrite(cat, 'Pic Agent: 关键字', function()
+  withWrite(cat, 'Lightroom Agent: keywords', function()
     for _, it in ipairs(p.items or {}) do
       local ph = resolvePhoto(cat, it)
       if ph then
@@ -475,15 +475,15 @@ function H.collection_add(p)
   local photos, missing = resolveMany(cat, p.items or p.paths)
   local set, col = nil, nil
   if p.set and p.set ~= '' then
-    withWrite(cat, 'Pic Agent: 收藏集组', function()
+    withWrite(cat, 'Lightroom Agent: collection set', function()
       set = cat:createCollectionSet(p.set, nil, true)
     end, 60)
   end
-  withWrite(cat, 'Pic Agent: 创建收藏集', function()
+  withWrite(cat, 'Lightroom Agent: create collection', function()
     col = cat:createCollection(p.name, set, true)
   end, 60)
   if not col then error('could not create collection ' .. p.name) end
-  withWrite(cat, 'Pic Agent: 收藏集照片', function()
+  withWrite(cat, 'Lightroom Agent: collection photos', function()
     if p.replace then col:removeAllPhotos() end
     if #photos > 0 then col:addPhotos(photos) end
   end, p.timeout or 120)
@@ -529,7 +529,7 @@ function H.collection_delete(p)
   local cat = catalog()
   local col = findCollection(cat, p.name)
   if not col then error('collection not found: ' .. tostring(p.name)) end
-  withWrite(cat, 'Pic Agent: 删除收藏集', function() col:delete() end, 60)
+  withWrite(cat, 'Lightroom Agent: delete collection', function() col:delete() end, 60)
   return { deleted = p.name }
 end
 
@@ -547,7 +547,7 @@ local function applySettings(ph, settings, historyName)
   local ok = pcall(ph.applyDevelopSettings, ph, settings, historyName)
   if ok then return true end
   presetCounter = presetCounter + 1
-  local preset = LrApplication.addDevelopPresetForPlugin(_PLUGIN, 'PicAgent-' .. presetCounter, settings)
+  local preset = LrApplication.addDevelopPresetForPlugin(_PLUGIN, 'LightroomAgent-' .. presetCounter, settings)
   ph:applyDevelopPreset(preset, _PLUGIN)
   return true
 end
@@ -561,7 +561,7 @@ function H.apply_develop(p)
     for _, path in ipairs(p.paths or {}) do items[#items + 1] = { path = path } end
   end
   local updated, missing, errors = 0, json.array({}), json.array({})
-  withWrite(cat, p.history or 'Pic Agent: 修图参数', function()
+  withWrite(cat, p.history or 'Lightroom Agent: develop settings', function()
     for _, it in ipairs(items) do
       local ph = resolvePhoto(cat, it)
       if not ph then
@@ -570,7 +570,7 @@ function H.apply_develop(p)
         local s = {}
         for k, v in pairs(global) do s[k] = v end
         for k, v in pairs(it.settings or {}) do s[k] = v end
-        local ok, e = pcall(applySettings, ph, s, p.history or 'Pic Agent')
+        local ok, e = pcall(applySettings, ph, s, p.history or 'Lightroom Agent')
         if ok then updated = updated + 1 else errors[#errors + 1] = { path = it.path, error = tostring(e) } end
       end
     end

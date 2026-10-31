@@ -28,6 +28,16 @@ def load_font(size):
     return ImageFont.load_default()
 
 
+def _fit(draw, text, font, width):
+    """Shorten text from the middle (keeping the distinctive start and end of file names) to fit width pixels."""
+    if draw.textlength(text, font=font) <= width:
+        return text
+    head, tail = text[:len(text) // 2], text[len(text) // 2:]
+    while head and tail and draw.textlength(head + '…' + tail, font=font) > width:
+        head, tail = head[:-1], tail[1:]
+    return head + '…' + tail
+
+
 def build(run_dir, out_dir, items, cols=4, rows=3, cell=380, prefix='sheet', caption_h=34, group_rows=False):
     os.makedirs(out_dir, exist_ok=True)
     thumbs = os.path.join(run_dir, 'thumbs')
@@ -47,8 +57,8 @@ def build(run_dir, out_dir, items, cols=4, rows=3, cell=380, prefix='sheet', cap
     sheets = []
     for si in range(0, len(items), per):
         chunk = items[si:si + per]
-        W = cols * cell
-        H = rows * (cell + caption_h)
+        W = min(cols, len(chunk)) * cell                     # a short last sheet is not padded to the full grid
+        H = -(-len(chunk) // cols) * (cell + caption_h)
         sheet = Image.new('RGB', (W, H), (28, 28, 28))
         draw = ImageDraw.Draw(sheet)
         for i, it in enumerate(chunk):
@@ -72,9 +82,10 @@ def build(run_dir, out_dir, items, cols=4, rows=3, cell=380, prefix='sheet', cap
             hl = isinstance(it, dict) and it.get('highlight')
             if hl:
                 draw.rectangle([x0 + 1, y0 + 1, x0 + cell - 2, y0 + cell - 2], outline=(80, 220, 120), width=4)
-            draw.text((x0 + 6, y0 + cell + 2), f'{num}' + ('  KEEP' if hl else ''), fill=(80, 220, 120) if hl else (255, 255, 255), font=font)
+            label = _fit(draw, f'{num}' + ('  KEEP' if hl else ''), font, cell - 10)
+            draw.text((x0 + 6, y0 + cell + 2), label, fill=(80, 220, 120) if hl else (255, 255, 255), font=font)
             if cap2:
-                draw.text((x0 + 6, y0 + cell + 18), cap2[:60], fill=(190, 190, 190), font=font_small)
+                draw.text((x0 + 6, y0 + cell + 18), _fit(draw, cap2, font_small, cell - 10), fill=(190, 190, 190), font=font_small)
         out = os.path.join(out_dir, f'{prefix}_{si // per + 1:02d}.jpg')
         sheet.save(out, quality=82)
         sheets.append(out)

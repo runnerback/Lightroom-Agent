@@ -3,12 +3,12 @@ local LrTasks = import 'LrTasks'
 LrTasks.startAsyncTask(function()
   local ok, Server = pcall(require, 'Server')
   if not ok then
-    LrDialogs.message('Pic Agent Bridge', '加载失败: ' .. tostring(Server), 'critical')
+    LrDialogs.message('Lightroom Agent', 'Failed to load: ' .. tostring(Server), 'critical')
     return
   end
   Server.stop('menu restart')
   LrTasks.sleep(1.0)
   Server.start()
   LrTasks.sleep(0.5)
-  LrDialogs.message('Pic Agent Bridge', Server.statusText(), 'info')
+  LrDialogs.message('Lightroom Agent', Server.statusText(), 'info')
 end)

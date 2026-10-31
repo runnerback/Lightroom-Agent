@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import cli  # noqa: E402
 from mcp.server.mcpserver import Image, MCPServer  # noqa: E402
+from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 from mcp.types import ToolAnnotations  # noqa: E402
 
 DATA = os.environ.get('LIGHTROOM_AGENT_HOME', os.path.join(os.path.expanduser('~'), '.lightroom-agent'))
@@ -63,7 +64,7 @@ _procs = {}
 
 def _src(collection, folder):
     if bool(collection) == bool(folder):
-        raise ValueError('give exactly one of collection or folder')
+        raise ToolError('give exactly one of collection or folder')
     return ['--collection', collection] if collection else ['--folder', folder]
 
 
@@ -86,10 +87,11 @@ def list_photos(collection: str = '', folder: str = '') -> dict:
 
 
 @server.tool(annotations=WRITE)
-def cull_photos(collection: str = '', folder: str = '', run_dir: str = '') -> dict:
+def cull_photos(collection: str = '', folder: str = '', run_dir: str = '', subject: str = 'main') -> dict:
     """Start technical culling (job): sharpness, closed eyes, exposure, burst duplicates. Writes nothing to Lightroom.
+    subject: 'main' (largest face) or 'child' (a baby/child held by or next to adults).
     Result: keep/reject contact sheets (view them with view_image) and cull.json in run_dir. Then call pick_photos."""
-    return _job('cull', *_src(collection, folder), *(['--run', run_dir] if run_dir else []))
+    return _job('cull', *_src(collection, folder), '--subject', subject, *(['--run', run_dir] if run_dir else []))
 
 
 @server.tool(annotations=WRITE)
@@ -110,20 +112,23 @@ def make_collection(name: str, names: list[str], from_collection: str = '', from
 
 @server.tool(annotations=READ)
 def list_styles() -> dict:
-    """Colour styles defined in styles/STYLES.md (name, description, skin / white targets)."""
+    """Colour styles (name, description, skin / white targets). Each style is one Markdown file: styles/<name>.md in
+    the repository, or the user's own in ~/.lightroom-agent/styles/ (guide: styles/README.md)."""
     import style_lib
-    return {'ok': True, 'doc': style_lib.STYLES_DOC,
+    return {'ok': True, 'guide': os.path.join(style_lib.STYLES_DIR, 'README.md'), 'user_styles_dir': style_lib.USER_STYLES_DIR,
+            'files': style_lib.style_files(),
             'styles': {n: {'desc': s.get('desc'), 'skin': s['skin'], 'white': s.get('white')} for n, s in style_lib.load_styles().items()}}
 
 
 @server.tool(annotations=WRITE)
 def apply_style(style: str, collection: str, run_dir: str = '', only: list[str] | None = None, skin_wb: list[str] | None = None,
-                refine: bool = False, reuse_calib: bool = False, max_ev: float = 0.9, iters: int = 3) -> dict:
+                refine: bool = False, reuse_calib: bool = False, max_ev: float = 0.9, iters: int = 3, subject: str = 'main') -> dict:
     """Start applying a style (job) to every photo of a collection, calibrating exposure and white balance per photo on
     the subject's face. style: full name or letter (A, B, C, D...). only: recalibrate just these photos (needs refine).
     skin_wb: photos whose 'whites' are really cream/beige, balanced on skin instead. reuse_calib: re-apply a previous
-    calibration without re-measuring. RAW shoots usually want max_ev=1.5, iters=4. Crops are never changed."""
-    argv = ['apply-style', style, '--collection', collection] + (['--run', run_dir] if run_dir else [])
+    calibration without re-measuring. RAW shoots usually want max_ev=1.5, iters=4. subject: 'main' (largest face) or
+    'child' (a baby/child next to adults). Crops are never changed."""
+    argv = ['apply-style', style, '--collection', collection, '--subject', subject] + (['--run', run_dir] if run_dir else [])
     argv += ['--max-ev', max_ev, '--iters', iters] + (['--refine'] if refine else []) + (['--reuse-calib'] if reuse_calib else [])
     argv += (['--only', *only] if only else []) + (['--skin-wb', *skin_wb] if skin_wb else [])
     return _job(*argv)
@@ -137,10 +142,10 @@ def rollback_style(collection: str, style: str = '', run_dir: str = '') -> dict:
 
 
 @server.tool(annotations=READ)
-def check_boxes(style: str, collection: str, run_dir: str = '') -> dict:
+def check_boxes(style: str, collection: str, run_dir: str = '', subject: str = 'main') -> dict:
     """QA: draw the face patch each photo was calibrated on (red) and today's detection (green) into boxes.jpg.
     A red box off the face means that photo was calibrated on the wrong thing - re-run apply_style with only=[...]"""
-    return _cli('check-boxes', style, '--collection', collection, *(['--run', run_dir] if run_dir else []), timeout=600)
+    return _cli('check-boxes', style, '--collection', collection, '--subject', subject, *(['--run', run_dir] if run_dir else []), timeout=600)
 
 
 @server.tool(annotations=READ)
@@ -185,7 +190,7 @@ def view_image(path: str, max_size: int = 1600) -> Image:
     """Return a contact sheet / overview / QA image (from a summary of the other tools) so you can look at it."""
     from PIL import Image as PILImage
     if not path.lower().endswith(('.jpg', '.jpeg', '.png')) or not os.path.isfile(path) or not _allowed(path):
-        raise ValueError('only .jpg/.png images inside a Lightroom Agent run directory can be viewed')
+        raise ToolError('only .jpg/.png images inside a Lightroom Agent run directory can be viewed')
     im = PILImage.open(path).convert('RGB')
     im.thumbnail((max_size, max_size))
     buf = io.BytesIO()
