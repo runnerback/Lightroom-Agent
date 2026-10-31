@@ -1,37 +1,119 @@
 {
   "A_清透奶白": {
     "desc": "high-key airy: soft contrast, protected highlights, desaturated creams, bright clean skin",
-    "skin": {"L": 72, "a": 13, "b": 15},
+    "skin": {
+      "L": 72,
+      "a": 13,
+      "b": 15
+    },
     "settings": {
-      "Contrast2012": -10, "Highlights2012": -45, "Shadows2012": 20, "Whites2012": 5, "Blacks2012": 5,
-      "Texture": -10, "Clarity2012": -5, "Vibrance": 5, "Saturation": -8,
-      "SaturationAdjustmentOrange": -8, "LuminanceAdjustmentOrange": 10,
-      "SaturationAdjustmentYellow": -25, "SaturationAdjustmentGreen": -20,
-      "ToneCurvePV2012": [0, 8, 64, 68, 128, 134, 192, 197, 255, 252]
+      "Contrast2012": -10,
+      "Highlights2012": -45,
+      "Shadows2012": 20,
+      "Whites2012": 5,
+      "Blacks2012": 5,
+      "Texture": -10,
+      "Clarity2012": -5,
+      "Vibrance": 5,
+      "Saturation": -8,
+      "SaturationAdjustmentOrange": -8,
+      "LuminanceAdjustmentOrange": 10,
+      "SaturationAdjustmentYellow": -25,
+      "SaturationAdjustmentGreen": -20,
+      "ToneCurvePV2012": [
+        0,
+        8,
+        64,
+        68,
+        128,
+        134,
+        192,
+        197,
+        255,
+        252
+      ]
+    },
+    "white": {
+      "a": 0.5,
+      "b": 1.5
     }
   },
   "B_暖调胶片": {
     "desc": "warm film: faded blacks, muted greens, warm split-tone, light grain and vignette",
-    "skin": {"L": 68, "a": 15, "b": 22},
+    "skin": {
+      "L": 68,
+      "a": 15,
+      "b": 22
+    },
     "settings": {
-      "Contrast2012": -15, "Highlights2012": -35, "Shadows2012": 15, "Whites2012": -5, "Blacks2012": 10,
-      "Saturation": -12, "Vibrance": 6, "Texture": -5,
-      "HueAdjustmentGreen": 15, "SaturationAdjustmentGreen": -30, "SaturationAdjustmentYellow": -10,
+      "Contrast2012": -15,
+      "Highlights2012": -35,
+      "Shadows2012": 15,
+      "Whites2012": -5,
+      "Blacks2012": 10,
+      "Saturation": -12,
+      "Vibrance": 6,
+      "Texture": -5,
+      "HueAdjustmentGreen": 15,
+      "SaturationAdjustmentGreen": -30,
+      "SaturationAdjustmentYellow": -10,
       "SaturationAdjustmentBlue": -20,
-      "SplitToningShadowHue": 35, "SplitToningShadowSaturation": 8,
-      "SplitToningHighlightHue": 45, "SplitToningHighlightSaturation": 10, "SplitToningBalance": 0,
-      "GrainAmount": 12, "GrainSize": 20, "GrainFrequency": 50,
-      "PostCropVignetteAmount": -8, "PostCropVignetteMidpoint": 50, "PostCropVignetteFeather": 70,
-      "ToneCurvePV2012": [0, 22, 60, 64, 128, 130, 200, 203, 255, 245]
+      "SplitToningShadowHue": 35,
+      "SplitToningShadowSaturation": 8,
+      "SplitToningHighlightHue": 45,
+      "SplitToningHighlightSaturation": 10,
+      "SplitToningBalance": 0,
+      "GrainAmount": 12,
+      "GrainSize": 20,
+      "GrainFrequency": 50,
+      "PostCropVignetteAmount": -8,
+      "PostCropVignetteMidpoint": 50,
+      "PostCropVignetteFeather": 70,
+      "ToneCurvePV2012": [
+        0,
+        22,
+        60,
+        64,
+        128,
+        130,
+        200,
+        203,
+        255,
+        245
+      ]
+    },
+    "white": {
+      "a": 1.0,
+      "b": 5.0
     }
   },
   "C_自然通透": {
     "desc": "natural documentary: true colour, crisp but gentle, moderate highlight recovery",
-    "skin": {"L": 66, "a": 14, "b": 18},
+    "skin": {
+      "L": 66,
+      "a": 14,
+      "b": 18
+    },
     "settings": {
-      "Contrast2012": 5, "Highlights2012": -30, "Shadows2012": 15, "Whites2012": 5, "Blacks2012": -5,
-      "Texture": 5, "Clarity2012": 5, "Vibrance": 10, "Saturation": 0,
-      "ToneCurvePV2012": [0, 0, 255, 255]
+      "Contrast2012": 5,
+      "Highlights2012": -30,
+      "Shadows2012": 15,
+      "Whites2012": 5,
+      "Blacks2012": -5,
+      "Texture": 5,
+      "Clarity2012": 5,
+      "Vibrance": 10,
+      "Saturation": 0,
+      "ToneCurvePV2012": [
+        0,
+        0,
+        255,
+        255
+      ]
+    },
+    "white": {
+      "a": 0.5,
+      "b": 2.5
     }
   }
 }

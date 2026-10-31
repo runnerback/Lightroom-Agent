@@ -24,6 +24,8 @@ ap.add_argument('--max-ev', type=float, default=0.9)
 ap.add_argument('--calib-edge', type=int, default=1600, help='long edge of calibration exports (face detection runs on them)')
 ap.add_argument('--rollback')
 ap.add_argument('--reuse-calib', action='store_true', help='re-apply adjustments from an existing calib.json instead of recalibrating')
+ap.add_argument('--refine', action='store_true', help='recalibrate, starting from the adjustments in an existing calib.json')
+ap.add_argument('--only', nargs='*', help='with --refine: recalibrate just these photo names, keep the rest of calib.json')
 a = ap.parse_args()
 
 if a.rollback:
@@ -74,19 +76,28 @@ with LrBridge() as lr:
         json.dump(baseline, open(bpath, 'w'), ensure_ascii=False, indent=1)
 
     calib, pending = {}, []
+    cpath = os.path.join(out, 'calib.json')
+    prev_calib = json.load(open(cpath, encoding='utf-8')) if (a.refine or a.only) and os.path.exists(cpath) else {}
     if a.reuse_calib:
         calib = json.load(open(os.path.join(out, 'calib.json'), encoding='utf-8'))
         for p in photos:
             adj, extra = calib[p['name']]['adj'], calib[p['name']].get('extra', {})
             lr.apply_develop(paths=[p['path']], settings={**style['settings'], **extra, **adj, **style_lib.wb_mode(adj)}, history=f'Pic Agent: 风格 {a.style}')
         photos_to_calibrate = []
+    elif a.only:
+        calib = {k: v for k, v in prev_calib.items() if k not in a.only}
+        photos_to_calibrate = [p for p in photos if p['name'] in a.only]
     else:
         photos_to_calibrate = photos
     # Faces are detected on the calibration exports themselves, so the user's crop / straighten is respected.
     for p in photos_to_calibrate:
         extra = noise_reduction(p, p['develop'])
+        # Without a previous calibration start from the saved pre-style baseline (camera as-shot WB), not from
+        # whatever an earlier run left applied.
+        start = prev_calib[p['name']]['adj'] if p['name'] in prev_calib else style_lib.initial_adj(
+            {**p['develop'], **json.load(open(bpath, encoding='utf-8')).get(p['path'], {})})
         adj, hist = style_lib.calibrate(lr, p['path'], None, style, tmp, a.iters, a.max_ev, a.calib_edge, f'Pic Agent: 风格 {a.style}',
-                                        start=style_lib.initial_adj(p['develop']), extra=extra)
+                                        start=start, extra=extra)
         if adj is None:
             pending.append(p); continue
         calib[p['name']] = {'adj': adj, 'extra': extra, 'meas': hist[-1]['meas'], 'hist': hist, 'source': 'face'}
