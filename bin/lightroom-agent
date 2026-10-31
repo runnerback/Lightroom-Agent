@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Lightroom Agent launcher (macOS / Linux). Keeps a private Python environment in ~/.lightroom-agent/venv,
+# (re)building it when requirements.txt changes, then runs the CLI. Usage: lightroom-agent --help
+set -euo pipefail
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do                      # resolve symlinks (e.g. ~/.local/bin/lightroom-agent -> repo)
+  dir="$(cd -P "$(dirname "$src")" && pwd)"; src="$(readlink "$src")"; [[ $src != /* ]] && src="$dir/$src"
+done
+root="$(cd -P "$(dirname "$src")/.." && pwd)"
+home="${LIGHTROOM_AGENT_HOME:-$HOME/.lightroom-agent}"
+venv="$home/venv"
+req="$root/requirements.txt"
+need="$( (shasum -a 256 "$req" 2>/dev/null || sha256sum "$req") | cut -d' ' -f1)"
+if [ ! -x "$venv/bin/python" ] || [ "$(cat "$venv/.requirements.sha256" 2>/dev/null)" != "$need" ]; then
+  py="${LIGHTROOM_AGENT_PYTHON:-}"
+  if [ -z "$py" ]; then
+    for c in python3.13 python3.12 python3.11 python3.10 python3.14 python3; do
+      if command -v "$c" >/dev/null && "$c" -c 'import sys; sys.exit(not (3, 10) <= sys.version_info[:2] <= (3, 14))'; then py="$c"; break; fi
+    done
+  fi
+  [ -n "$py" ] || { echo "lightroom-agent: needs Python 3.10-3.14 (https://www.python.org/downloads/)" >&2; exit 1; }
+  echo "lightroom-agent: setting up Python environment in $venv (first run, 1-3 minutes)..." >&2
+  "$py" -m venv "$venv" >&2
+  "$venv/bin/python" -m pip install -q --upgrade pip >&2
+  "$venv/bin/python" -m pip install -q -r "$req" >&2
+  echo "$need" > "$venv/.requirements.sha256"
+fi
+exec "$venv/bin/python" -I "$root/pipeline/cli.py" "$@"

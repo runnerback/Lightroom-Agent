@@ -17,7 +17,7 @@ for si in range(0, len(names), a.per_sheet):
     sheet = Image.new('RGB', (len(cols) * a.cell, cap + len(chunk) * a.cell), (24, 24, 24))
     d = ImageDraw.Draw(sheet)
     for c, col in enumerate(cols):
-        d.text((c * a.cell + 12, 8), '原图 (相机直出)' if col == 'original' else col, fill=(235, 235, 235), font=font)
+        d.text((c * a.cell + 12, 8), 'original' if col == 'original' else col, fill=(235, 235, 235), font=font)
         for r, n in enumerate(chunk):
             im = Image.open(os.path.join(root, col, n)); im.thumbnail((a.cell - 8, a.cell - 8))
             sheet.paste(im, (c * a.cell + (a.cell - im.width) // 2, cap + r * a.cell + (a.cell - im.height) // 2))

@@ -1,0 +1,12 @@
+{
+  "name": "lightroom-agent",
+  "owner": { "name": "Runnerback" },
+  "description": "Lightroom Agent: AI culling and colour grading for Adobe Lightroom Classic",
+  "plugins": [
+    {
+      "name": "lightroom-agent",
+      "source": "./",
+      "description": "Cull and colour-grade photos in Lightroom Classic from Claude Code (skill + MCP server)"
+    }
+  ]
+}

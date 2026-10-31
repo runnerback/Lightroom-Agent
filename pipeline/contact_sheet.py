@@ -17,7 +17,9 @@ from PIL import Image, ImageDraw, ImageFont
 def load_font(size):
     for p in ('/System/Library/Fonts/Hiragino Sans GB.ttc', '/System/Library/Fonts/STHeiti Medium.ttc',
               '/System/Library/Fonts/Helvetica.ttc', '/System/Library/Fonts/SFNS.ttf',
-              '/System/Library/Fonts/Supplemental/Arial.ttf'):
+              '/System/Library/Fonts/Supplemental/Arial.ttf',
+              'C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/arial.ttf',
+              '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'):
         if os.path.exists(p):
             try:
                 return ImageFont.truetype(p, size)
@@ -66,7 +68,7 @@ def build(run_dir, out_dir, items, cols=4, rows=3, cell=380, prefix='sheet', cap
             except Exception as e:
                 draw.text((x0 + 10, y0 + 10), f'missing {name}', fill=(255, 80, 80), font=font)
             idx = si + i + 1
-            num = os.path.splitext(name)[0].replace('JBZ', '')
+            num = os.path.splitext(name)[0]
             hl = isinstance(it, dict) and it.get('highlight')
             if hl:
                 draw.rectangle([x0 + 1, y0 + 1, x0 + cell - 2, y0 + cell - 2], outline=(80, 220, 120), width=4)

@@ -1,7 +1,8 @@
 **/_PRD
-
+.DS_Store
 __pycache__/
 *.pyc
-
 .venv/
 runs/
+.claude/
+lightroom_plugin/*/DEV_ENABLE_EVAL

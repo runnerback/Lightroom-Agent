@@ -8,10 +8,11 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import style_lib
+from contact_sheet import load_font
 
 D = sys.argv[1]
 c = json.load(open(os.path.join(D, 'calib.json'), encoding='utf-8'))
-font = ImageFont.truetype('/System/Library/Fonts/Hiragino Sans GB.ttc', 14)
+font = load_font(14)
 
 
 def to_upright(box):
@@ -48,6 +49,6 @@ sheet = Image.new('RGB', (cols * W, -(-len(cells) // cols) * (W + 20)), (25, 25,
 for i, (n, t, mv) in enumerate(cells):
     r, cc = divmod(i, cols)
     sheet.paste(t, (cc * W, r * (W + 20)))
-    d.text((cc * W + 2, r * (W + 20) + W), n[3:12] + (' 变化' if mv else ''), fill=(255, 120, 120) if mv else (220, 220, 220), font=font)
+    d.text((cc * W + 2, r * (W + 20) + W), os.path.splitext(n)[0][:16] + (' moved' if mv else ''), fill=(255, 120, 120) if mv else (220, 220, 220), font=font)
 sheet.save(os.path.join(D, 'boxes.jpg'), quality=88)
 print('box changed:', moved_names)

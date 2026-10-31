@@ -2,7 +2,7 @@
 """Render style proofs in Lightroom: apply each style to sample photos, calibrate exposure / WB so the subject's
 skin hits the style's Lab target, export, then restore the photos' original develop settings.
 
-Usage: style_proof.py <run_dir> <styles/STYLES.md> --names JBZ04064.JPG ... [--folder <jpg dir>] [--iters 3] [--long-edge 1600]
+Usage: style_proof.py <run_dir> <styles/STYLES.md> --names IMG_0001.JPG ... [--folder <jpg dir>] [--iters 3] [--long-edge 1600]
 Output: <run_dir>/style_proofs/<style>/<name>.jpg, original/<name>.jpg, calib.json, compare_*.jpg
 """
 import argparse, json, os, shutil, sys
@@ -15,7 +15,7 @@ from style_lib import DEFAULTS, measure
 ap = argparse.ArgumentParser()
 ap.add_argument('run_dir'); ap.add_argument('styles')
 ap.add_argument('--names', nargs='+', required=True)
-ap.add_argument('--folder', default='/Volumes/T4/SynologyDrive/ALL-照片/2026/20261024-宝宝百天/jpg')
+ap.add_argument('--folder', required=True, help='folder of the analysed JPGs')
 ap.add_argument('--iters', type=int, default=3)
 ap.add_argument('--long-edge', type=int, default=1600)
 ap.add_argument('--max-ev', type=float, default=0.9, help='cap on exposure push; side-lit faces would otherwise wash out the scene')
@@ -56,7 +56,7 @@ with LrBridge() as lr:
                 adj = {'Exposure2012': 0.0, 'IncrementalTemperature': 0, 'IncrementalTint': 0}
                 hist = []
                 for it in range(a.iters + 1):
-                    lr.apply_develop(paths=[paths[n]], settings={**st['settings'], **adj}, history=f'Pic Agent: 小样 {sname}')
+                    lr.apply_develop(paths=[paths[n]], settings={**st['settings'], **adj}, history=f'Lightroom Agent: proof {sname}')
                     final = it == a.iters or box is None
                     f = export_one(lr, n, os.path.join(out_root, sname) if final else tmp, a.long_edge if final else 800)
                     meas = measure(f, box) if box else None
@@ -68,7 +68,7 @@ with LrBridge() as lr:
                 last = hist[-1]['meas']
                 print(sname, n, hist[-1]['adj'], last and {k: round(v, 1) for k, v in last.items()}, flush=True)
     finally:
-        r = lr.apply_develop(items=[{'path': paths[n], 'settings': baseline[n]} for n in a.names], history='Pic Agent: 恢复小样前参数')
+        r = lr.apply_develop(items=[{'path': paths[n], 'settings': baseline[n]} for n in a.names], history='Lightroom Agent: undo proof')
         print('restored:', r)
 shutil.rmtree(tmp, ignore_errors=True)
 json.dump(calib, open(os.path.join(out_root, 'calib.json'), 'w'), ensure_ascii=False, indent=1)

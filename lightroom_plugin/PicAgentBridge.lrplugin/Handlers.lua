@@ -107,7 +107,8 @@ local function findCollection(cat, name)
   return walk(cat)
 end
 
-local RAW_KEYS = { 'path', 'rating', 'pickStatus', 'colorNameForLabel', 'width', 'height', 'uuid', 'fileSize', 'isVirtualCopy' }
+local RAW_KEYS = { 'path', 'rating', 'pickStatus', 'colorNameForLabel', 'width', 'height', 'uuid', 'fileSize', 'isVirtualCopy',
+                   'dateTimeOriginal', 'isoSpeedRating', 'fileFormat' }
 local FMT_KEYS = { 'dateTimeOriginal', 'isoSpeedRating', 'aperture', 'shutterSpeed', 'focalLength', 'lens', 'cameraModel', 'keywordTags', 'copyName' }
 
 -- Lightroom's batch metadata calls return a table keyed "by photo", but the keys are not
@@ -242,6 +243,9 @@ local function describe(photos, cat)
       rating = raw(ph, 'rating') or 0, pick = raw(ph, 'pickStatus') or 0, label = labelOut(raw(ph, 'colorNameForLabel')),
       width = raw(ph, 'width'), height = raw(ph, 'height'), size = raw(ph, 'fileSize'), virtual = raw(ph, 'isVirtualCopy'),
       datetime = fmt(ph, 'dateTimeOriginal'), iso = fmt(ph, 'isoSpeedRating'), aperture = fmt(ph, 'aperture'),
+      -- locale-independent: capture time as Unix seconds, ISO as a number, file format (RAW, DNG, JPG, ...)
+      time = raw(ph, 'dateTimeOriginal') and (raw(ph, 'dateTimeOriginal') + 978307200) or nil,
+      iso_value = raw(ph, 'isoSpeedRating'), format = raw(ph, 'fileFormat'),
       shutter = fmt(ph, 'shutterSpeed'), focal = fmt(ph, 'focalLength'), lens = fmt(ph, 'lens'),
       camera = fmt(ph, 'cameraModel'), keywords = fmt(ph, 'keywordTags'), copy = fmt(ph, 'copyName'),
     }
@@ -362,7 +366,24 @@ function H.catalog_info(p)
     for _, c in ipairs(folder:getChildren() or {}) do walk(c, depth + 1) end
   end
   for _, root in ipairs(cat:getFolders() or {}) do walk(root, 0) end
-  return { catalog = cat:getPath(), folders = folders }
+  local collections = json.array({})
+  local function walkSets(container, prefix)
+    for _, c in ipairs(container:getChildCollections() or {}) do
+      if not c:isSmartCollection() then
+        local n = nil
+        if p.count then
+          local ok, r = pcall(function() return #c:getPhotos() end)
+          if ok then n = r end
+        end
+        collections[#collections + 1] = { name = c:getName(), set = prefix, photos = n }
+      end
+    end
+    for _, s in ipairs(container:getChildCollectionSets() or {}) do
+      walkSets(s, prefix and (prefix .. ' / ' .. s:getName()) or s:getName())
+    end
+  end
+  walkSets(cat, nil)
+  return { catalog = cat:getPath(), folders = folders, collections = collections }
 end
 
 ---------------------------------------------------------------- UI commands
@@ -468,6 +489,40 @@ function H.collection_add(p)
   end, p.timeout or 120)
   if p.show then cat:setActiveSources({ col }) end
   return { collection = p.name, set = p.set, added = #photos, missing = missing }
+end
+
+-- Add image files to the catalog in place (no copy / move), optionally into a collection.
+-- Files already in the catalog are reused, so calling this twice is harmless.
+function H.import_photos(p)
+  local cat = catalog()
+  local paths = p.paths or {}
+  if #paths == 0 then error('paths required') end
+  local photos, added, existing, failed = {}, json.array({}), json.array({}), json.array({})
+  for _, path in ipairs(paths) do
+    local ok, ph = pcall(cat.findPhotoByPath, cat, path)
+    if ok and ph then
+      existing[#existing + 1] = path
+      photos[#photos + 1] = ph
+    elseif not LrFileUtils.exists(path) then
+      failed[#failed + 1] = path .. ': file not found'
+    else
+      local r
+      withWrite(cat, 'Lightroom Agent: import', function() r = cat:addPhoto(path) end, 120)
+      if r then
+        added[#added + 1] = path
+        photos[#photos + 1] = r
+        remember(r, path, nil)
+      else
+        failed[#failed + 1] = path .. ': addPhoto failed'
+      end
+    end
+  end
+  local col
+  if p.collection and #photos > 0 then
+    local res = H.collection_add({ name = p.collection, set = p.set, items = paths, show = p.show })
+    col = res.collection
+  end
+  return { added = added, existing = existing, failed = failed, collection = col }
 end
 
 function H.collection_delete(p)
@@ -592,15 +647,19 @@ end
 -- Run a Lua snippet inside Lightroom (localhost dev tool). The snippet sees `cat`, `json`, `H`, `cache`, `log`
 -- plus the plugin globals (`import`, `_PLUGIN`). Return values are JSON-encoded (userdata as strings).
 function H.eval(p)
+  -- Arbitrary Lua is a developer tool only: enabled by an empty file named DEV_ENABLE_EVAL in the plugin folder.
+  if not LrFileUtils.exists(LrPathUtils.child(_PLUGIN.path, 'DEV_ENABLE_EVAL')) then
+    error('eval is disabled (developer tool); create DEV_ENABLE_EVAL in the plugin folder to enable it')
+  end
   if type(p.code) ~= 'string' then error('code required') end
+  -- The plugin sandbox has neither setfenv nor table.maxn: pass the helpers in as chunk arguments instead.
   local loader = loadstring or load
-  local chunk, err = loader(p.code, '=eval')
+  local chunk, err = loader('local cat, json, H, cache, log = ...\n' .. p.code, '=eval')
   if not chunk then error('compile: ' .. tostring(err)) end
-  local env = setmetatable({ cat = catalog(), json = json, H = H, cache = cache, log = log }, { __index = _G })
-  if setfenv then setfenv(chunk, env) end
-  local results = { chunk() }
+  local function pack(...) return { n = select('#', ...), ... } end
+  local results = pack(chunk(catalog(), json, H, cache, log))
   local out = json.array({})
-  for i = 1, table.maxn(results) do
+  for i = 1, results.n do
     local v = results[i]
     local tv = type(v)
     if tv == 'userdata' or tv == 'function' or tv == 'thread' then v = tostring(v) end

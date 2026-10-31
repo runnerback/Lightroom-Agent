@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""Pic Agent <-> Lightroom Classic bridge client (stdlib only).
+"""Lightroom Agent <-> Lightroom Classic bridge client (stdlib only).
 
-Talks to the "Pic Agent Bridge" Lightroom plugin over two localhost TCP ports:
+Talks to the "Lightroom Agent" Lightroom plugin over two localhost TCP ports:
 commands go in on 50111 (one JSON object per line), responses come back on 50112.
 
 Library use:
     from lr_client import LrBridge
     with LrBridge(timeout=args.timeout) as lr:
         print(lr.ping())
-        photos = lr.list_folder('/Volumes/T4/SynologyDrive/ALL-照片/2026/20261024-宝宝百天/jpg')
+        photos = lr.list_folder('/Users/me/Pictures/2026/shoot/jpg')
         lr.set_meta([{'path': p['path'], 'rating': 3} for p in photos[:5]])
 
 CLI use:
     python3 lr_client.py ping
-    python3 lr_client.py list-folder "/Volumes/T4/.../jpg" --out photos.json
+    python3 lr_client.py list-folder "/Users/me/Pictures/shoot" --out photos.json
     python3 lr_client.py set-meta --paths a.JPG b.JPG --rating 3 --label green
-    python3 lr_client.py export /tmp/out --folder "/Volumes/T4/.../jpg" --min-rating 3 --long-edge 2048
+    python3 lr_client.py export /tmp/out --folder "/Users/me/Pictures/shoot" --min-rating 3 --long-edge 2048
 """
 import argparse
-import fcntl
+try:
+    import fcntl
+except ImportError:          # Windows
+    fcntl = None
+    import msvcrt
 import json
 import os
 import socket
@@ -40,7 +44,7 @@ class LrBridge:
     order (commands port first, then responses port) lets the plugin recycle its response
     socket for us. A ping handshake confirms the response channel really is ours."""
 
-    LOCK_PATH = os.path.expanduser('~/.pic_agent_lr_bridge.lock')
+    LOCK_PATH = os.path.expanduser('~/.lightroom_agent_bridge.lock')
 
     def __init__(self, host=HOST, port_in=PORT_IN, port_out=PORT_OUT, timeout=600, lock=True):
         self.host, self.port_in, self.port_out = host, port_in, port_out
@@ -49,15 +53,23 @@ class LrBridge:
         self._lock = None
         if lock:
             self._lock = open(self.LOCK_PATH, 'w')
-            fcntl.flock(self._lock, fcntl.LOCK_EX)   # wait for any other bridge client to finish
+            self._flock(True)   # wait for any other bridge client to finish
         try:
             self._connect_in()
         except LrError as e:
             self.close()
-            raise LrError(f'{e}\n请确认 Lightroom Classic 正在运行,且 Pic Agent Bridge 插件已添加并启用。') from e
+            raise LrError(f'{e}\nIs Lightroom Classic running with the Lightroom Agent plugin installed and enabled? '
+                          '(File > Plug-in Manager; see docs/install-plugin.md)') from e
         time.sleep(0.3)  # let the plugin notice the new command client and recycle its response socket
         self._connect_out()
         self._handshake()
+
+    def _flock(self, on):
+        if fcntl:
+            fcntl.flock(self._lock, fcntl.LOCK_EX if on else fcntl.LOCK_UN)
+        else:
+            self._lock.seek(0)
+            msvcrt.locking(self._lock.fileno(), msvcrt.LK_LOCK if on else msvcrt.LK_UNLCK, 1)
 
     def _connect_out(self):
         last = None
@@ -74,7 +86,7 @@ class LrBridge:
             except OSError as e:
                 last = e
                 time.sleep(0.3)
-        raise LrError(f'无法连接响应端口 {self.port_out}: {last}')
+        raise LrError(f'cannot connect to the response port {self.port_out}: {last}')
 
     def _connect_in(self):
         last = None
@@ -87,7 +99,7 @@ class LrBridge:
             except OSError as e:
                 last = e
                 time.sleep(0.5)
-        raise LrError(f'无法连接命令端口 {self.port_in}: {last}')
+        raise LrError(f'cannot connect to the command port {self.port_in}: {last}')
 
     def _handshake(self):
         """Ping until a pong proves both channels are ours. Survives the plugin recycling
@@ -108,8 +120,8 @@ class LrBridge:
                 time.sleep(0.3)
             self._connect_out()
         self.close()
-        raise LrError('与 Lightroom 插件握手失败:收不到响应。'
-                      '请在 Lightroom 菜单 图库 › 增效工具附加功能 › Pic Agent Bridge: 重启服务,然后重试。')
+        raise LrError('handshake with the Lightroom plugin failed: no response. In Lightroom choose '
+                      'Library > Plug-in Extras > Lightroom Agent: Restart service, then retry.')
 
     def close(self):
         for s in (self.rf, self.inp, self.out):
@@ -121,7 +133,7 @@ class LrBridge:
         self.rf = self.inp = self.out = None
         if self._lock:
             try:
-                fcntl.flock(self._lock, fcntl.LOCK_UN)
+                self._flock(False)
                 self._lock.close()
             except Exception:
                 pass
@@ -142,7 +154,7 @@ class LrBridge:
         try:
             self.inp.sendall((line + '\n').encode('utf-8'))
         except OSError as e:
-            raise LrError(f'命令通道已断开 ({e}),插件可能刚被重新载入,请重试') from e
+            raise LrError(f'command channel closed ({e}); the plugin may have just been reloaded, retry') from e
         return rid
 
     def _read_until(self, rid, timeout):
@@ -154,7 +166,7 @@ class LrBridge:
             except socket.timeout:
                 return None
             if not raw:
-                raise LrError('Lightroom 关闭了响应连接')
+                raise LrError('Lightroom closed the response connection')
             raw = raw.strip()
             if not raw:
                 continue
@@ -172,7 +184,7 @@ class LrBridge:
         rid = self._send(cmd, params)
         result = self._read_until(rid, timeout or self.timeout)
         if result is None:
-            raise LrError(f'{cmd} 在 {timeout or self.timeout}s 内没有返回')
+            raise LrError(f'{cmd} did not return within {timeout or self.timeout}s')
         return result
 
     @staticmethod
@@ -408,5 +420,5 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except LrError as e:
-        print(f'错误: {e}', file=sys.stderr)
+        print(f'error: {e}', file=sys.stderr)
         sys.exit(2)

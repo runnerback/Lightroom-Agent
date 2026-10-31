@@ -40,6 +40,16 @@ def load_styles(path=STYLES_DOC):
     return styles
 
 
+def resolve_style(styles, name):
+    """Full style name, or its letter prefix ('D', 'd' -> 'D_富士胶片')."""
+    if name in styles:
+        return name
+    hits = [n for n in styles if n.split('_')[0].lower() == name.lower()]
+    if len(hits) == 1:
+        return hits[0]
+    raise SystemExit(f'unknown style {name!r}; available: {", ".join(styles)}')
+
+
 def style_settings(styles, name):
     """Settings for one style, with every key that *another* style sets reset to neutral, so switching styles
     never leaves leftovers (e.g. A's orange HSL under B)."""
@@ -81,7 +91,8 @@ def measure(path, box):
     keep = (L > np.percentile(L, 10)) & (L < np.percentile(L, 95))   # drop eyes / nostrils / speculars
     gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
     out = {'L': float(L[keep].mean()), 'a': float(A[keep].mean()), 'b': float(B[keep].mean()),
-           'clip_hi': float((gray >= 250).mean() * 100)}
+           'clip_hi': float((gray >= 250).mean() * 100),
+           'ref_L': float(np.percentile(lab[..., 0], 95) * 100 / 255)}   # brightest scene areas, see skin_target()
     # Near-neutral bright areas (bedding, blankets, clothes): their cast is what the eye judges white balance by.
     full = lab.reshape(-1, 3)
     fl, fa, fb = full[:, 0] * 100 / 255, full[:, 1] - 128, full[:, 2] - 128
@@ -167,7 +178,7 @@ def wb_mode(adj):
 
 def initial_adj(develop):
     """Starting point for calibration. Raw files (ARW/DNG) carry absolute Temperature/Tint; JPGs only incremental offsets."""
-    if develop.get('Temperature') is not None:
+    if develop.get('Temperature'):              # JPG / TIFF report no Temperature, or 0
         return {'Exposure2012': 0.0, 'Temperature': int(develop['Temperature']), 'Tint': int(develop.get('Tint') or 0)}
     return {'Exposure2012': 0.0, 'IncrementalTemperature': 0, 'IncrementalTint': 0}
 
@@ -222,13 +233,29 @@ def step(adj, meas, tgt, max_ev, prev=None, style=None):
     return new
 
 
-def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, history='Pic Agent', start=None, extra=None):
+DEPTH_FREE = 36      # L* gap between the brightest scene areas and the face that light skin normally shows
+DEPTH_GAIN = 0.8     # how much of any larger gap is kept (deeper skin stays deeper)
+MIN_SKIN_L = 40
+
+
+def skin_target(style, meas):
+    """The style's skin target, lowered for deep skin tones. The style targets are tuned on light skin; pushing deep
+    skin to L70 would wash the whole photo out. Skin depth is judged against the brightest areas of the same frame
+    (whites, background, clothes), which is roughly independent of how the photo was exposed."""
+    tgt = dict(style['skin'])
+    depth = meas.get('ref_L', 0) - meas['L']
+    if depth > DEPTH_FREE:
+        tgt['L'] = max(MIN_SKIN_L, tgt['L'] - DEPTH_GAIN * (depth - DEPTH_FREE))
+    return tgt
+
+
+def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, history='Lightroom Agent', start=None, extra=None):
     """Apply style, then iterate exposure/WB until the skin patch hits style['skin']. Leaves the final settings applied.
     box=None: detect the face on the first export (respects the user's crop/rotation); returns (None, hist) if none found.
     start: initial adj (see initial_adj); extra: per-photo settings merged over the style (e.g. noise reduction).
     Returns (adj, hist); hist[-1]['meas'] is the measurement of the final settings."""
     adj = dict(start or {'Exposure2012': 0.0, 'IncrementalTemperature': 0, 'IncrementalTint': 0})
-    hist = []
+    hist, tgt = [], None
     for it in range(iters + 1):
         lr.apply_develop(paths=[path], settings={**style['settings'], **(extra or {}), **adj, **wb_mode(adj)}, history=history)
         f = export_one(lr, path, tmp, long_edge)
@@ -237,10 +264,12 @@ def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, his
             if box is None:
                 return None, hist
         meas = measure(f, box)
-        hist.append({'adj': dict(adj), 'meas': meas, 'box': list(box)})
+        if tgt is None:                          # skin depth is judged once, on the first render
+            tgt = skin_target(style, meas)
+        hist.append({'adj': dict(adj), 'meas': meas, 'box': list(box), 'skin_target': tgt})
         if it == iters:
             break
-        adj = step(adj, meas, style['skin'], max_ev, hist[-2] if len(hist) > 1 else None, style)
+        adj = step(adj, meas, tgt, max_ev, hist[-2] if len(hist) > 1 else None, style)
     return adj, hist
 
 
