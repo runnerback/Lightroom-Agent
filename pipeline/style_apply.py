@@ -30,6 +30,10 @@ ap.add_argument('--refine', action='store_true', help='recalibrate, starting fro
 ap.add_argument('--only', nargs='*', help='with --refine: recalibrate just these photo names, keep the rest of calib.json')
 ap.add_argument('--skin-wb', nargs='*', default=[], help='balance WB on skin for these photos even when they have white areas '
                 '(whites that are really cream clothes / beige sofa pull the whole frame too cool)')
+ap.add_argument('--wb-from', nargs='*', default=[], metavar='NAME=REF',
+                help='lock the white balance of photo NAME to the calibrated WB of photo REF (same light, enough whites); '
+                'exposure is still calibrated on NAME\'s face. For frames with too few whites whose skin-based WB comes out '
+                'off (tight crops, deep shade), e.g. --wb-from JBZ0813.ARW=JBZ0817.ARW')
 ap.add_argument('--borrow-window', type=float, default=30, help='minutes: a photo without a face borrows the calibration of '
                 'a face photo taken at most this long before/after it (same scene and light); otherwise keeps its own exposure / WB')
 ap.add_argument('--no-overview', action='store_true', help='skip the 800px overview export and contact sheets')
@@ -111,18 +115,33 @@ with LrBridge() as lr:
             sys.exit(f'not in {a.collection}: {", ".join(sorted(unknown))}')
     else:
         photos_to_calibrate = photos
+    wb_from = dict(x.split('=', 1) for x in a.wb_from)
+    unknown = (set(wb_from) | set(wb_from.values())) - {p['name'] for p in photos}
+    if unknown:
+        sys.exit(f'--wb-from: not in {a.collection}: {", ".join(sorted(unknown))}')
+    # Photos with a WB reference go last, so the reference is calibrated first.
+    photos_to_calibrate.sort(key=lambda p: p['name'] in wb_from)
     # Faces are detected on the calibration exports themselves, so the user's crop / straighten is respected.
     for p in photos_to_calibrate:
         extra = noise_reduction(p, p['develop'])
         # Without a previous calibration start from the saved pre-style baseline (camera as-shot WB), not from
         # whatever an earlier run left applied.
-        start = prev_calib[p['name']]['adj'] if p['name'] in prev_calib else style_lib.initial_adj({**p['develop'], **baseline[p['path']]})
+        # A borrowed calibration belongs to another photo: don't refine from it.
+        own = prev_calib.get(p['name'], {}).get('source') == 'face'
+        start = prev_calib[p['name']]['adj'] if own else style_lib.initial_adj({**p['develop'], **baseline[p['path']]})
         st = {k: v for k, v in style.items() if k != 'white'} if p['name'] in a.skin_wb else style
+        ref = wb_from.get(p['name'])
+        if ref:
+            if ref not in calib:
+                sys.exit(f'--wb-from: {ref} has no calibration (no face? calibrate it first)')
+            wb = {k: v for k, v in calib[ref]['adj'].items() if k != 'Exposure2012'}
+            start = {**start, **wb}
+            st = dict(st, lock_wb=True)
         adj, hist = style_lib.calibrate(lr, p['path'], None, st, tmp, a.iters, a.max_ev, a.calib_edge, history, start=start, extra=extra)
         if adj is None:
             pending.append(p); continue
         calib[p['name']] = {'adj': adj, 'extra': extra, 'meas': hist[-1]['meas'], 'hist': hist, 'source': 'face',
-                            'wb_on': 'skin' if st is not style else 'auto', 'time': p.get('time')}
+                            'wb_on': f'from {ref}' if ref else 'skin' if st is not style else 'auto', 'time': p.get('time')}
         print(p['name'], 'face', style_lib.adj_text(adj), extra, {k: round(v, 1) for k, v in hist[-1]['meas'].items()}, flush=True)
 
     # No usable face: borrow from the nearest calibrated frame in time (same scene, same light).

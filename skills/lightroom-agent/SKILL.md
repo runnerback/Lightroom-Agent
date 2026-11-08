@@ -89,6 +89,10 @@ lightroom-agent apply-style D --collection "Wedding picks" --max-ev 1.5 --iters 
 - Fix a few photos: `apply-style D --collection C --refine --only IMG_1.ARW IMG_2.ARW`
   (`--skin-wb IMG_1.ARW ...` when the frame's "whites" are really cream clothes or a beige sofa and the photo came
   out too cool / skin grey).
+- A frame with few whites (tight crop, deep shade) whose skin-based WB came out pink/orange (tint ≳ +35, unlike its
+  neighbours): lock its WB to a neighbour shot in the same light, exposure still from its own face —
+  `apply-style D --collection C --refine --only IMG_2.ARW --wb-from IMG_2.ARW=IMG_3.ARW`. Pass the same `--wb-from`
+  when applying the other styles to the set.
 - RAW noise reduction is set automatically by ISO; files whose name says Enhanced/Denoise (Lightroom AI Denoise
   DNGs) get none — prefer those versions when they exist.
 

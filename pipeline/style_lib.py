@@ -171,13 +171,15 @@ def detect_subject(path, min_score=0.7):
             if float(f[14]) < min_score or f[2] <= 12 or f[2] / w < MIN_FACE:
                 continue
             # Balloons and plush toys have cartoon faces that YuNet happily detects; keep only skin-coloured ones.
+            # Pale pastel looks (D) with whites-balanced WB render real skin down to a~2-3: the b/a ratio still
+            # rejects white / yellow toys there.
             x0, y0 = int(f[0] + f[2] * 0.25), int(f[1] + f[3] * 0.35)
             x1, y1 = int(f[0] + f[2] * 0.75), int(f[1] + f[3] * 0.75)
             p = lab[max(0, y0):y1, max(0, x0):x1].reshape(-1, 3)
             if len(p) == 0:
                 continue
             fa, fb = np.median(p[:, 1]) - 128, np.median(p[:, 2]) - 128
-            if not (3 < fa < 35 and 3 < fb < 40 and 0.25 < fb / max(fa, 0.1) < 4):
+            if not (1.5 < fa < 35 and 2 < fb < 40 and 0.25 < fb / max(fa, 0.1) < 4):
                 continue
             cands.append((float(f[14]), f[2] * f[3] / (w * h), k, f, w, h))
     if not cands:
@@ -271,6 +273,9 @@ def step(adj, meas, tgt, max_ev, prev=None, style=None):
         prev = {'adj': prev['adj'], 'meas': pmeas} if pmeas is not None else None
     for key, (ch, fwd, back, g0, (lo, hi)) in _AXES.items():
         if key not in adj:
+            continue
+        if style is not None and style.get('lock_wb'):   # WB taken from a reference photo: only exposure moves
+            new[key] = adj[key]
             continue
         x = fwd(adj[key])
         g = g0
