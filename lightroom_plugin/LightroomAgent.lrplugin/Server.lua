@@ -28,7 +28,7 @@ log:enable('logfile')
 local prefs = LrPrefs.prefsForPlugin()
 
 local M = {
-  VERSION = '0.1.0',               -- keep in step with Info.lua and .claude-plugin/plugin.json
+  VERSION = '0.3.0',               -- keep in step with Info.lua and .claude-plugin/plugin.json
   PORT_IN = 50111,
   PORT_OUT = 50112,
   running = false,

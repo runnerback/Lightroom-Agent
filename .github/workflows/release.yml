@@ -1,15 +1,15 @@
-# Publishes a GitHub Release whenever a version tag (v1.2.3, v1.2.3-beta.1) is pushed.
-# Make the tag with:  python3 scripts/release.py 1.2.3 --push   (bumps every version file, commits, tags, pushes)
+# Publishes a GitHub Release whenever a version tag is pushed: plain versions without "v" (0.3.0, 0.4.0-beta.1).
+# Before tagging, set the version in every file:  python3 scripts/release.py 0.3.0   (then commit, tag, push)
 # Re-publish an existing tag: Actions > Release > Run workflow > tag.
 name: Release
 
 on:
   push:
-    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+    tags: ['[0-9]+.[0-9]+.[0-9]+*']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to (re)publish, e.g. v0.2.0
+        description: Existing tag to (re)publish, e.g. 0.3.0
         required: true
 
 permissions:

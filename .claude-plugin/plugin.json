@@ -1,6 +1,6 @@
 {
   "name": "lightroom-agent",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "AI photo culling and colour grading for Adobe Lightroom Classic: skill + local MCP server",
   "author": { "name": "Runnerback", "url": "https://github.com/Runnerback" },
   "homepage": "https://github.com/Runnerback/lightroom-agent",

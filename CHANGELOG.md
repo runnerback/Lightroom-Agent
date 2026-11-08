@@ -1,9 +1,11 @@
 # Changelog
 
 Write changes under **Unreleased** as you go. `python3 scripts/release.py X.Y.Z` turns that section into
-`vX.Y.Z - <date>`, and the release workflow uses it as the highlights of the GitHub release.
+`X.Y.Z - <date>`, and the release workflow uses it as the highlights of the GitHub release.
 
 ## Unreleased
+
+## 0.3.0 - 2026-11-08
 
 ### Added
 - Black-and-white styles **E1_Leica_Monochrom** (long, smooth tonal range, neutral grey) and **E2_GR_IV_Monochrome**
@@ -14,8 +16,8 @@ Write changes under **Unreleased** as you go. `python3 scripts/release.py X.Y.Z`
   presets; only the destination folder is replaced.
 - `apply-style --wb-from NAME=REF`: lock a photo's white balance to a neighbour shot in the same light (for tight crops
   or deep shade with too few whites); exposure is still calibrated on its own face.
-- Release automation: `scripts/release.py` and `.github/workflows/release.yml` (push a `v*` tag, get a GitHub
-  release with the Lightroom plugin attached).
+- Release automation: `scripts/release.py` and `.github/workflows/release.yml` (push a version tag such as
+  `0.3.0`, get a GitHub release with the Lightroom plugin attached).
 
 ### Fixed
 - Faces were missed in pale, pastel renders (style D with whites-balanced WB): the skin-colour filter is slightly wider.

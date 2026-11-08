@@ -31,7 +31,7 @@ the user, then the whole collection (job) -> view_image on the overview and chec
 Rules: never change the user's crop/rotation (the tools don't); apply_style keeps a baseline so rollback_style can undo it;
 final exports are the user's call - only use export_photos when they ask. Reply in the user's language."""
 
-server = MCPServer('lightroom-agent', instructions=INSTRUCTIONS, version='0.1.0')
+server = MCPServer('lightroom-agent', instructions=INSTRUCTIONS, version='0.3.0')
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
 

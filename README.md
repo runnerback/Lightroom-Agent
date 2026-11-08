@@ -198,7 +198,7 @@ pipeline/                         cli.py, mcp_server.py, culling, styles, contac
 lightroom_plugin/                 LightroomAgent.lrplugin (Lua)
 bridge/lr_client.py               socket client for the plugin
 scripts/install.py                one-step installer
-scripts/release.py                version bump + tag; .github/workflows/release.yml publishes the release
+scripts/release.py                version bump; .github/workflows/release.yml publishes a release per tag
 CHANGELOG.md                      what changed in each version
 ```
 

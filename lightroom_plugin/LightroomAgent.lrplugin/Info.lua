@@ -12,5 +12,5 @@ return {
     { title = 'Lightroom Agent: Status', file = 'MenuStatus.lua' },
     { title = 'Lightroom Agent: Restart service', file = 'MenuRestart.lua' },
   },
-  VERSION = { major = 0, minor = 1, revision = 0, build = 0 },
+  VERSION = { major = 0, minor = 3, revision = 0, build = 0 },
 }

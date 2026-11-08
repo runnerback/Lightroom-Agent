@@ -187,7 +187,7 @@ pipeline/                         cli.py、mcp_server.py、选片、调色、小
 lightroom_plugin/                 LightroomAgent.lrplugin(Lua)
 bridge/lr_client.py               插件的 socket 客户端
 scripts/install.py                一键安装脚本
-scripts/release.py                改版本号并打 tag;.github/workflows/release.yml 自动发布 Release
+scripts/release.py                改版本号;推送 tag 后 .github/workflows/release.yml 自动发布 Release
 CHANGELOG.md                      每个版本的改动
 ```
 
