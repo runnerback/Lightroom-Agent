@@ -83,6 +83,9 @@ lightroom-agent apply-style D --collection "Wedding picks" --max-ev 1.5 --iters 
   styles, show the user the overview sheets, then style the whole collection.
 - Defaults: `--max-ev 0.9 --iters 3` (JPG). For RAW use `--max-ev 1.5 --iters 4`.
 - Switching style: just apply the other style (keys of the previous style are reset automatically).
+- Black-and-white styles (E1 Leica Monochrom, E2 GR IV Monochrome; any style with `"ConvertToGrayscale": true`):
+  exposure is calibrated on the face, white balance stays as shot, raw files switch to the Adobe Monochrome profile
+  and get their colour profile back when a colour style is applied later.
 - Undo: `lightroom-agent rollback --collection C` (back to before the first style of this run) or
   `lightroom-agent rollback B --collection C` (back to just before style B).
 - Re-apply a previous calibration without re-measuring: `apply-style B --collection C --reuse-calib`.

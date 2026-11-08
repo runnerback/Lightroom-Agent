@@ -11,6 +11,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](./requirements.txt)
 [![MCP](https://img.shields.io/badge/MCP-server-8A2BE2)](./docs/agents_CN.md)
 [![Agent Skill](https://img.shields.io/badge/Agent-Skill-orange)](./skills/lightroom-agent/SKILL.md)
+[![Release](https://img.shields.io/github/v/release/Runnerback/lightroom-agent?sort=semver)](https://github.com/Runnerback/lightroom-agent/releases)
 [![GitHub stars](https://img.shields.io/github/stars/Runnerback/lightroom-agent?style=social)](https://github.com/Runnerback/lightroom-agent/stargazers)
 
 <img src="docs/assets/hero.jpg" alt="同一张照片的五种效果:原图和 Lightroom Agent 套用的 A-D 四种风格" width="100%">
@@ -33,10 +34,13 @@
   (或肤色)来定。光线变化的一整组照片也能保持一致。深肤色会保留原有的深度,不会被硬提亮。
 - **尊重你的修改。** 不动你的裁切、角度和方向;你不说就不导出;每次调色都可以一键撤销。
 - **自己检查质量。** 生成总览图和测量位置检查图,AI 先自己看一遍再向你汇报,有问题的照片会点名。
+- **彩色和黑白都有。** 四种彩色风格,外加两种黑白风格,分别参考徕卡 M Monochrom 和理光 GR IV Monochrome。
+  黑白风格会把 RAW 切换到单色配置文件,再套彩色风格时自动切回来。
 - **风格就是文本文件。** [`styles/`](./styles/) 里每个风格一个 Markdown 文件:文字写给人看,JSON 写给程序。
   你自己的风格放在 `~/.lightroom-agent/styles/`,也可以直接让 AI 帮你新建一个。
+- **按你的方式导出。** 你要文件时,它用你自己的 Lightroom 导出预设(尺寸、命名、锐化、元数据)导出,每种风格一个文件夹。
 
-## 🎨 四种内置风格
+## 🎨 内置风格
 
 <img src="docs/assets/styles-grid.jpg" alt="三张照片的原图和 A-D 四种风格" width="100%">
 
@@ -46,8 +50,14 @@
 | **B** | Warm Film 暖调胶片 | 黑位发灰、暖色分离色调、细颗粒、淡暗角 | 生活记录、黄金时刻街拍 |
 | **C** | Natural 自然通透 | 真实色彩、清晰通透 | 街拍、旅行、纪实、风光 |
 | **D** | Fuji 400H 富士胶片 | 薄荷绿、阴影偏青、肤色粉嫩、粉彩雾感 | 日光人像、绿植、日系清新 |
+| **E1** | Leica Monochrom 徕卡黑白 | 影调长而细腻、中性灰、暗部有层次、高光柔和过渡 | 耐看的人像、柔光或混合光 |
+| **E2** | GR IV Monochrome 理光黑白 | "Solid" 硬调曲线加红滤镜:肤色通透、天空和绿植压暗、细颗粒 | 街拍、旅行、强光、绿植前的人物 |
 
 <p align="center"><img src="docs/assets/styles.gif" alt="同一张照片轮流切换各个风格" width="70%"></p>
+
+**黑白:** E1 保留徕卡 Monochrom 那种长而安静的影调;E2 是 GR 的 "Solid" 硬调曲线加红滤镜:人脸通透,天空和绿植沉下去。
+
+<img src="docs/assets/styles-bw.jpg" alt="三张照片的原图、E1 徕卡黑白和 E2 理光 GR 黑白" width="100%">
 
 ## 🤖 支持的 AI 工具
 
@@ -92,6 +102,8 @@ lightroom-agent doctor
 > 就用 D。套到全部精选上,检查一下肤色。
 
 > 第二张有点偏冷,修一下。然后把淘汰的照片都撤销回原样。
+
+> 再出一套徕卡黑白(E1),两套都用我的 "export-1920" 导出预设导出,每种风格一个文件夹。
 
 AI 在背后执行的流程:
 
@@ -154,6 +166,13 @@ AI 助手 ──(技能:lightroom-agent 命令 │ MCP 工具)──► Python �
 </details>
 
 <details>
+<summary><b>能导出成片吗?</b></summary>
+
+你要求时才导出。可以直接用你自己的 Lightroom 导出预设(`lightroom-agent export --collection 收藏集名 --dest 文件夹
+--preset "我的预设"`):尺寸、格式、文件命名、锐化、元数据都按预设来,每次只指定文件夹,比如每种风格一个文件夹。
+</details>
+
+<details>
 <summary><b>哪些 Lightroom 功能没法自动化?</b></summary>
 
 没有 SDK 接口、只能在菜单里操作的功能:AI 降噪、HDR / 全景合并、蒙版。需要时 AI 会提醒你去用。
@@ -168,9 +187,12 @@ pipeline/                         cli.py、mcp_server.py、选片、调色、小
 lightroom_plugin/                 LightroomAgent.lrplugin(Lua)
 bridge/lr_client.py               插件的 socket 客户端
 scripts/install.py                一键安装脚本
+scripts/release.py                改版本号并打 tag;.github/workflows/release.yml 自动发布 Release
+CHANGELOG.md                      每个版本的改动
 ```
 
 欢迎贡献,尤其是新风格(一个 `.md` 文件加前后对比图,见 [styles/README_CN.md](./styles/README_CN.md))和 Windows 测试。
+发布流程见 [docs/releasing_CN.md](./docs/releasing_CN.md) 和 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 📄 开源协议
 

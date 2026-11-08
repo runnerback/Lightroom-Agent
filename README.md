@@ -11,6 +11,7 @@ English | [中文](./README_CN.md)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](./requirements.txt)
 [![MCP](https://img.shields.io/badge/MCP-server-8A2BE2)](./docs/agents.md)
 [![Agent Skill](https://img.shields.io/badge/Agent-Skill-orange)](./skills/lightroom-agent/SKILL.md)
+[![Release](https://img.shields.io/github/v/release/Runnerback/lightroom-agent?sort=semver)](https://github.com/Runnerback/lightroom-agent/releases)
 [![GitHub stars](https://img.shields.io/github/stars/Runnerback/lightroom-agent?style=social)](https://github.com/Runnerback/lightroom-agent/stargazers)
 
 <img src="docs/assets/hero.jpg" alt="One photo, five looks: original and styles A-D applied by Lightroom Agent" width="100%">
@@ -36,10 +37,14 @@ editable develop settings. No uploads, no exported copies, nothing locked into a
   run can be rolled back.
 - **Checks its own quality.** Overview sheets and face-patch QA sheets that the agent reviews before it reports, naming
   the photos that need a look.
+- **Colour and black and white.** Four colour looks and two B&W looks modelled on the Leica M Monochrom and the
+  Ricoh GR IV Monochrome; B&W styles switch raw files to a monochrome profile and switch them back for colour.
 - **Styles are plain text.** One Markdown file per look in [`styles/`](./styles/): prose for humans, a JSON block
   for the machine. Your own go in `~/.lightroom-agent/styles/`. Or just ask your agent to create one.
+- **Exports your way.** When you ask for files, it exports through your own Lightroom export preset (size, naming,
+  sharpening, metadata), one folder per style.
 
-## 🎨 Four built-in styles
+## 🎨 Built-in styles
 
 <img src="docs/assets/styles-grid.jpg" alt="Three photos in the original and styles A to D" width="100%">
 
@@ -49,8 +54,15 @@ editable develop settings. No uploads, no exported copies, nothing locked into a
 | **B** | Warm Film | faded blacks, warm split tone, fine grain, light vignette | lifestyle, golden-hour street |
 | **C** | Natural | true colour, crisp and clear | street, travel, documentary, landscapes |
 | **D** | Fuji 400H | mint greens, cyan shadows, pink skin, pastel haze | daylight portraits, greenery, fresh Japanese look |
+| **E1** | Leica Monochrom (B&W) | long smooth tonal range, neutral grey, detailed blacks, gentle highlight roll-off | timeless portraits, soft or mixed light |
+| **E2** | GR IV Monochrome (B&W) | hard "Solid" curve, red filter: luminous skin, dark skies and foliage, light grain | street, travel, strong light, subjects against greenery |
 
 <p align="center"><img src="docs/assets/styles.gif" alt="Cycling through the styles on one photo" width="70%"></p>
+
+**Black and white:** E1 keeps the long, quiet tonal range of a Leica Monochrom; E2 is the GR's hard "Solid" curve
+through a red filter: faces glow, skies and foliage drop away.
+
+<img src="docs/assets/styles-bw.jpg" alt="Three photos in the original, E1 Leica Monochrom and E2 GR IV Monochrome" width="100%">
 
 ## 🤖 Works with your AI tool
 
@@ -96,6 +108,8 @@ Per-tool setup: [docs/agents.md](./docs/agents.md).
 > D it is. Apply it to all the picks and check the skin tones.
 
 > The second one looks too cool — fix it. Then undo everything on the rejected ones.
+
+> Make a Leica-style black-and-white set too (E1), and export both with my "export-1920" preset, one folder per style.
 
 Behind the scenes the agent runs:
 
@@ -162,6 +176,14 @@ reports are welcome.
 </details>
 
 <details>
+<summary><b>Can it export the finished photos?</b></summary>
+
+Only when you ask. It can use one of your own Lightroom export presets (`lightroom-agent export --collection NAME
+--dest DIR --preset "My preset"`): size, format, file naming, sharpening and metadata come from the preset, and only
+the folder is chosen per job, e.g. one folder per style.
+</details>
+
+<details>
 <summary><b>Which Lightroom features can't it automate?</b></summary>
 
 Menu-only features with no SDK access: AI Denoise, HDR / panorama merge, masks. The agent tells you when to use them.
@@ -176,10 +198,13 @@ pipeline/                         cli.py, mcp_server.py, culling, styles, contac
 lightroom_plugin/                 LightroomAgent.lrplugin (Lua)
 bridge/lr_client.py               socket client for the plugin
 scripts/install.py                one-step installer
+scripts/release.py                version bump + tag; .github/workflows/release.yml publishes the release
+CHANGELOG.md                      what changed in each version
 ```
 
 Contributions are welcome, especially new styles (one `.md` file plus a before/after, see
-[styles/README.md](./styles/README.md)) and Windows testing.
+[styles/README.md](./styles/README.md)) and Windows testing. Releases: see [docs/releasing.md](./docs/releasing.md)
+and [CHANGELOG.md](./CHANGELOG.md).
 
 ## 📄 License
 

@@ -49,6 +49,7 @@
 ## 内置风格
 
 每个一个文件:[A_Airy_White](./A_Airy_White.md) · [B_Warm_Film](./B_Warm_Film.md) · [C_Natural](./C_Natural.md) · [D_Fuji_400H](./D_Fuji_400H.md)
+· 黑白:[E1_Leica_Monochrom](./E1_Leica_Monochrom.md) · [E2_GR_IV_Monochrome](./E2_GR_IV_Monochrome.md)
 
 | | A 清透奶白 | B 暖调胶片 | C 自然通透 | D 富士 400H |
 |---|---|---|---|---|
@@ -59,6 +60,22 @@
 | 色彩 | 低饱和,黄绿压低 | 低饱和,绿偏黄、蓝压低,暖色分离色调 | 自然,鲜艳度 +10 | 薄荷青绿,阴影偏青,肤色粉嫩,粉彩 |
 | 质感 | 柔化(纹理 −10,清晰度 −5) | 胶片颗粒 + 轻微暗角 | 略锐(纹理 +5,清晰度 +5) | 细颗粒,无暗角 |
 | 适合 | 明亮室内、白色背景、婚礼、高调人像 | 室内暖光、生活记录、黄金时刻街拍 | 街拍、旅行、纪实、风光、建筑 | 日光人像、粉彩场景、日系清新 |
+
+### 黑白风格(E1、E2)
+
+| | E1 徕卡 Monochrom | E2 理光 GR IV Monochrome |
+|---|---|---|
+| 一句话 | 徕卡 M Monochrom:影调长而细腻,安静、精确 | 理光 GR IV Monochrome 的 "Solid" 模式加内置红滤镜:有力度的街拍黑白 |
+| 肤色目标 L | 66 | 64 |
+| 反差 | 柔(只用配置文件自带的 S 曲线),高光 −40,阴影 +25 | 硬调 S 曲线,对比度 +30,黑色 −15,高光 −40 |
+| 黑白混合 | 接近中性,肤色略提亮 | 红滤镜:红/橙提亮,蓝/青/绿压暗 |
+| 质感 | 微反差(纹理 +10)、极细颗粒、轻微暗角 | 清晰度 +20、细颗粒、暗角较重 |
+
+参数里有 `"ConvertToGrayscale": true` 的就是黑白风格:
+- 只需要 `skin.L`:曝光按人脸校准,**白平衡保持相机原值**(它只影响颜色转成灰度的方式);不用 `white`,`--wb-from` 会被忽略;
+- RAW 会切换到 **Adobe Monochrome** 配置文件(彩色配置文件会盖过黑白开关);之后再套彩色风格,会恢复照片原来的彩色配置文件(没有就用 Adobe Color);
+- 影调由黑白混合决定:`GrayMixerRed`、`GrayMixerOrange`、`GrayMixerYellow`、`GrayMixerGreen`、`GrayMixerAqua`、
+  `GrayMixerBlue`、`GrayMixerPurple`、`GrayMixerMagenta`(−100 ~ +100)。红滤镜 = 红/橙提亮、蓝/青/绿压暗;黄滤镜是温和版;绿滤镜提亮绿色、压暗红色(肤色)。
 
 ## 新增风格
 

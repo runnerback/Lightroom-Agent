@@ -259,7 +259,9 @@ def cmd_styles(args):
     styles = style_lib.load_styles()
     for n, st in styles.items():
         w = st.get('white')
-        print(f'{n}: {st.get("desc", "")}\n    skin L{st["skin"]["L"]} a{st["skin"]["a"]} b{st["skin"]["b"]}'
+        sk = st['skin']
+        print(f'{n}: {st.get("desc", "")}\n    skin L{sk["L"]}'
+              + (' (B&W: exposure only, WB as shot)' if style_lib.is_mono(st) else f' a{sk["a"]} b{sk["b"]}')
               + (f', white a{w["a"]} b{w["b"]}' if w else ''))
     summary({'styles': {n: f for n, f in style_lib.style_files().items() if n in styles}, 'guide': os.path.join(style_lib.STYLES_DIR, 'README.md'),
              'user_styles_dir': style_lib.USER_STYLES_DIR})

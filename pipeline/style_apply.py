@@ -52,7 +52,8 @@ a.style = style_lib.resolve_style(styles, a.style)
 style = dict(styles[a.style], settings=style_lib.style_settings(styles, a.style))
 out = os.path.abspath(os.path.join(a.run_dir, 'style_applied', a.style))
 tmp, thumbs = os.path.join(out, '_iter'), os.path.join(out, 'thumbs')
-touched = sorted(set(style['settings']) | set(CALIB_KEYS))
+mono = style_lib.is_mono(style)
+touched = sorted(set(style['settings']) | set(CALIB_KEYS) | {'Look'})
 history = f'Lightroom Agent: style {a.style}'
 
 
@@ -75,7 +76,7 @@ with LrBridge() as lr:
         cur = lr.get_develop(p['path'])
         # JPG / TIFF have no absolute Temperature / Tint: never store a 0 for them (Lightroom then renders 0 K and
         # ignores later WB changes); an absent key stays absent.
-        baseline[p['path']] = {k: v for k in touched if (v := cur.get(k, None if k in ('Temperature', 'Tint') else DEFAULTS.get(k, 0))) is not None}
+        baseline[p['path']] = {k: v for k in touched if (v := cur.get(k, None if k in ('Temperature', 'Tint', 'Look') else DEFAULTS.get(k, 0))) is not None}
         p['develop'] = cur
     CROP = ('CropLeft', 'CropTop', 'CropRight', 'CropBottom', 'CropAngle', 'orientation')
     crops = {p['path']: {k: p['develop'].get(k) for k in CROP} for p in photos}
@@ -96,6 +97,21 @@ with LrBridge() as lr:
         original[path] = {**vals, **original.get(path, {})}
     json.dump(original, open(opath, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 
+    def profile(p):
+        """Per-photo profile change for raw files: Adobe Monochrome for a B&W style; for a colour style on a photo that
+        is B&W now, its own colour profile from before (original.json, then any style's baseline), else Adobe Color."""
+        look = p['develop'].get('Look')
+        if not look or mono == style_lib.look_is_mono(look):
+            return {}
+        if mono:
+            return {'Look': style_lib.MONO_LOOK}
+        root = os.path.dirname(out)
+        for f in [opath] + sorted(os.path.join(root, d, 'baseline.json') for d in os.listdir(root)):
+            prev = (json.load(open(f, encoding='utf-8')) if os.path.exists(f) else {}).get(p['path'], {}).get('Look')
+            if prev and not style_lib.look_is_mono(prev):
+                return {'Look': prev}
+        return {'Look': style_lib.COLOR_LOOK}
+
     calib, pending = {}, []
     cpath = os.path.join(out, 'calib.json')
     prev_calib = json.load(open(cpath, encoding='utf-8')) if (a.refine or a.only or a.reuse_calib) and os.path.exists(cpath) else {}
@@ -105,6 +121,7 @@ with LrBridge() as lr:
             if p['name'] not in calib:
                 sys.exit(f'{p["name"]} has no saved calibration; run without --reuse-calib')
             adj, extra = calib[p['name']]['adj'], calib[p['name']].get('extra', {})
+            extra = {**{k: v for k, v in extra.items() if k != 'Look'}, **profile(p)}   # profile: from the photo's state now
             lr.apply_develop(paths=[p['path']], settings={**style['settings'], **extra, **adj, **style_lib.wb_mode(adj)}, history=history)
         photos_to_calibrate = []
     elif a.only:
@@ -116,6 +133,9 @@ with LrBridge() as lr:
     else:
         photos_to_calibrate = photos
     wb_from = dict(x.split('=', 1) for x in a.wb_from)
+    if mono and wb_from:
+        print('B&W style: white balance stays as shot, --wb-from ignored', flush=True)
+        wb_from = {}
     unknown = (set(wb_from) | set(wb_from.values())) - {p['name'] for p in photos}
     if unknown:
         sys.exit(f'--wb-from: not in {a.collection}: {", ".join(sorted(unknown))}')
@@ -123,12 +143,14 @@ with LrBridge() as lr:
     photos_to_calibrate.sort(key=lambda p: p['name'] in wb_from)
     # Faces are detected on the calibration exports themselves, so the user's crop / straighten is respected.
     for p in photos_to_calibrate:
-        extra = noise_reduction(p, p['develop'])
+        extra = {**noise_reduction(p, p['develop']), **profile(p)}
         # Without a previous calibration start from the saved pre-style baseline (camera as-shot WB), not from
         # whatever an earlier run left applied.
         # A borrowed calibration belongs to another photo: don't refine from it.
         own = prev_calib.get(p['name'], {}).get('source') == 'face'
         start = prev_calib[p['name']]['adj'] if own else style_lib.initial_adj({**p['develop'], **baseline[p['path']]})
+        if mono:                                 # B&W: white balance as shot, only exposure is calibrated
+            start = {'Exposure2012': start['Exposure2012']}
         st = {k: v for k, v in style.items() if k != 'white'} if p['name'] in a.skin_wb else style
         ref = wb_from.get(p['name'])
         if ref:
@@ -142,18 +164,20 @@ with LrBridge() as lr:
             pending.append(p); continue
         calib[p['name']] = {'adj': adj, 'extra': extra, 'meas': hist[-1]['meas'], 'hist': hist, 'source': 'face',
                             'wb_on': f'from {ref}' if ref else 'skin' if st is not style else 'auto', 'time': p.get('time')}
-        print(p['name'], 'face', style_lib.adj_text(adj), extra, {k: round(v, 1) for k, v in hist[-1]['meas'].items()}, flush=True)
+        print(p['name'], 'face', style_lib.adj_text(adj), {k: v['Name'] if k == 'Look' else v for k, v in extra.items()}, {k: round(v, 1) for k, v in hist[-1]['meas'].items()}, flush=True)
 
     # No usable face: borrow from the nearest calibrated frame in time (same scene, same light).
     # With no calibrated frame at all, keep the camera's exposure / white balance and only apply the look.
     donors = [n for n, v in calib.items() if v.get('source') == 'face' and v.get('time') is not None]
     for p in pending:
-        extra = noise_reduction(p, p['develop'])
+        extra = {**noise_reduction(p, p['develop']), **profile(p)}
         donor = min(donors, key=lambda n: abs(calib[n]['time'] - p['time'])) if donors and p.get('time') is not None else None
         if donor and abs(calib[donor]['time'] - p['time']) <= a.borrow_window * 60:
             adj, source = calib[donor]['adj'], 'from ' + donor
         else:
             adj, source = style_lib.initial_adj({**p['develop'], **baseline[p['path']]}), 'no face'
+            if mono:
+                adj = {'Exposure2012': adj['Exposure2012']}
         lr.apply_develop(paths=[p['path']], settings={**style['settings'], **extra, **adj, **style_lib.wb_mode(adj)}, history=history)
         calib[p['name']] = {'adj': adj, 'extra': extra, 'source': source, 'time': p.get('time')}
         print(p['name'], source, style_lib.adj_text(adj), flush=True)

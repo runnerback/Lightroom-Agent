@@ -10,7 +10,33 @@ import numpy as np
 DEFAULTS = {'ToneCurvePV2012': [0, 0, 255, 255]}
 # Neutral values for keys whose Lightroom default is not 0.
 NEUTRAL = {'ToneCurvePV2012': [0, 0, 255, 255], 'GrainSize': 25, 'GrainFrequency': 50,
-           'PostCropVignetteMidpoint': 50, 'PostCropVignetteFeather': 50, 'PostCropVignetteRoundness': 0}
+           'PostCropVignetteMidpoint': 50, 'PostCropVignetteFeather': 50, 'PostCropVignetteRoundness': 0,
+           'ConvertToGrayscale': False}
+
+# Black-and-white styles ("ConvertToGrayscale": true). Raw files carry a profile ('Look') whose own parameters override
+# ConvertToGrayscale, so B&W styles switch raw files to Adobe Monochrome and colour styles switch them back (to the
+# photo's own colour profile from before, else Adobe Color). JPG / TIFF have no profile: the flag alone is enough.
+MONO_LOOK = {'Name': 'Adobe Monochrome', 'UUID': '0CFE8F8AB5F63B2A73CE0B0077D20817', 'Amount': 1,
+             'SupportsAmount': False, 'SupportsMonochrome': False, 'SupportsOutputReferred': False,
+             'Copyright': '© 2018 Adobe Systems, Inc.', 'Group': {'x-default': 'Profiles'},
+             'Parameters': {'Clarity2012': 8, 'ConvertToGrayscale': True, 'CameraProfile': 'Adobe Standard',
+                            'LookTable': '73ED6C18DDE909DD7EA2D771F5AC282D',
+                            'ToneCurvePV2012': [0, 0, 64, 56, 128, 128, 192, 197, 255, 255]}}
+COLOR_LOOK = {'Name': 'Adobe Color', 'UUID': 'B952C231111CD8E0ECCF14B86BAA7077', 'Amount': 1,
+              'SupportsAmount': False, 'SupportsMonochrome': False, 'SupportsOutputReferred': False,
+              'Copyright': '© 2018 Adobe Systems, Inc.', 'Group': {'x-default': 'Profiles'},
+              'Parameters': {'CameraProfile': 'Adobe Standard', 'ConvertToGrayscale': False,
+                             'LookTable': 'E1095149FDB39D7A057BAB208837E2E1',
+                             'ToneCurvePV2012': [0, 0, 22, 16, 40, 35, 127, 127, 224, 230, 240, 246, 255, 255]}}
+
+
+def is_mono(style):
+    """A black-and-white style: exposure is calibrated on the face, white balance stays as shot."""
+    return bool(style['settings'].get('ConvertToGrayscale'))
+
+
+def look_is_mono(look):
+    return bool(look) and bool((look.get('Parameters') or {}).get('ConvertToGrayscale'))
 
 
 STYLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'styles')
@@ -63,7 +89,8 @@ def load_styles(path=None):
             except json.JSONDecodeError as e:
                 raise ValueError(f'{f}: bad JSON: {e}') from None
     for n, st in styles.items():
-        missing = [k for k in ('skin', 'settings') if k not in st] + [f'skin.{k}' for k in 'Lab' if k not in st.get('skin', {})]
+        need = 'L' if st.get('settings', {}).get('ConvertToGrayscale') else 'Lab'     # B&W: skin lightness only
+        missing = [k for k in ('skin', 'settings') if k not in st] + [f'skin.{k}' for k in need if k not in st.get('skin', {})]
         missing += [f'white.{k}' for k in 'ab' if 'white' in st and k not in st['white']]
         if missing:
             raise ValueError(f'style {n}: missing {", ".join(missing)}')
@@ -160,6 +187,8 @@ def detect_subject(path, min_score=0.7):
     if max(im.shape[:2]) > 1000:
         k0 = 800 / max(im.shape[:2])
         im = cv2.resize(im, (int(im.shape[1] * k0), int(im.shape[0] * k0)), interpolation=cv2.INTER_AREA)
+    # A black-and-white render has no skin colour to check.
+    gray = float(np.abs(cv2.cvtColor(im, cv2.COLOR_BGR2LAB)[..., 1:].astype(np.float32) - 128).mean()) < 1.0
     cands = []                                   # (score, area_frac, k, face, w, h) across all four turns
     for k in (0, 1, 3, 2):
         r = im if k == 0 else np.ascontiguousarray(np.rot90(im, k))
@@ -179,7 +208,7 @@ def detect_subject(path, min_score=0.7):
             if len(p) == 0:
                 continue
             fa, fb = np.median(p[:, 1]) - 128, np.median(p[:, 2]) - 128
-            if not (1.5 < fa < 35 and 2 < fb < 40 and 0.25 < fb / max(fa, 0.1) < 4):
+            if not gray and not (1.5 < fa < 35 and 2 < fb < 40 and 0.25 < fb / max(fa, 0.1) < 4):
                 continue
             cands.append((float(f[14]), f[2] * f[3] / (w * h), k, f, w, h))
     if not cands:
@@ -232,6 +261,8 @@ def initial_adj(develop):
 
 
 def adj_text(adj):
+    if 'Temperature' not in adj and 'IncrementalTemperature' not in adj:     # B&W: white balance as shot
+        return 'EV {:+.2f} WB as shot'.format(adj['Exposure2012'])
     if 'Temperature' in adj:
         return 'EV {:+.2f} {}K t{:+d}'.format(adj['Exposure2012'], adj['Temperature'], adj['Tint'])
     return 'EV {Exposure2012:+.2f} T {IncrementalTemperature:+d} t {IncrementalTint:+d}'.format(**adj)
@@ -266,7 +297,7 @@ def step(adj, meas, tgt, max_ev, prev=None, style=None):
     if meas['clip_hi'] > tgt.get('clip_max', 100):   # brightening the face is blowing out shirts / sky: back off instead
         ev = min(ev, adj['Exposure2012'] - 0.2)
     new = {'Exposure2012': round(max(-max_ev, min(max_ev, ev)), 2)}
-    if style is not None:
+    if style is not None and any(k in adj for k in _AXES):
         tgt, wmeas, mode = _wb_view(style, meas)
         pmeas = _wb_view(style, prev['meas'])[1] if prev is not None and _wb_view(style, prev['meas'])[2] == mode else None
         meas = wmeas
@@ -328,9 +359,12 @@ def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, his
         adj = step(adj, meas, tgt, max_ev, hist[-2] if len(hist) > 1 else None, style)
     # WB moves also shift skin lightness, so the last iteration is not always the closest: keep the best one.
     def err(h):
-        wt, wm, _ = _wb_view(style, h['meas'])
         over = max(0.0, h['meas']['clip_hi'] - tgt['clip_max'])
-        return abs(h['meas']['L'] - tgt['L']) / 2 + abs(wm['a'] - wt['a']) + abs(wm['b'] - wt['b']) + 4 * over
+        e = abs(h['meas']['L'] - tgt['L']) / 2 + 4 * over
+        if any(k in h['adj'] for k in _AXES) and not style.get('lock_wb'):
+            wt, wm, _ = _wb_view(style, h['meas'])
+            e += abs(wm['a'] - wt['a']) + abs(wm['b'] - wt['b'])
+        return e
     best = min(hist, key=err)
     if best is not hist[-1]:
         lr.apply_develop(paths=[path], settings={**style['settings'], **(extra or {}), **best['adj'], **wb_mode(best['adj'])}, history=history)
@@ -341,5 +375,5 @@ def calibrate(lr, path, box, style, tmp, iters=3, max_ev=0.9, long_edge=800, his
 if __name__ == '__main__':          # check the styles: style_lib.py [folder or style file]
     import sys
     for n, st in load_styles(*sys.argv[1:2]).items():
-        print(f"{n}: skin L{st['skin']['L']} a{st['skin']['a']} b{st['skin']['b']}",
+        print(f"{n}: skin L{st['skin']['L']}" + ('' if is_mono(st) else f" a{st['skin']['a']} b{st['skin']['b']}"),
               f"white a{st['white']['a']} b{st['white']['b']}" if 'white' in st else 'white -', f"{len(st['settings'])} settings")

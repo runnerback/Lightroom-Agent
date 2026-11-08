@@ -60,6 +60,7 @@ The skin targets were tuned on light skin; deeper skin is handled by step 4 abov
 ## The built-in styles
 
 One file each: [A_Airy_White](./A_Airy_White.md) · [B_Warm_Film](./B_Warm_Film.md) · [C_Natural](./C_Natural.md) · [D_Fuji_400H](./D_Fuji_400H.md)
+· black and white: [E1_Leica_Monochrom](./E1_Leica_Monochrom.md) · [E2_GR_IV_Monochrome](./E2_GR_IV_Monochrome.md)
 
 | | A_Airy_White | B_Warm_Film | C_Natural | D_Fuji_400H |
 |---|---|---|---|---|
@@ -70,6 +71,25 @@ One file each: [A_Airy_White](./A_Airy_White.md) · [B_Warm_Film](./B_Warm_Film.
 | Colour | low saturation, muted yellow/green | low saturation, yellow-green, muted blue, warm split tone | natural, vibrance +10 | mint/cyan greens, cyan shadows, pink skin, pastels |
 | Texture | softened (texture −10, clarity −5) | film grain + light vignette | slightly crisp (texture +5, clarity +5) | fine grain, no vignette |
 | Good for | bright interiors, white backdrops, weddings, high-key portraits | warm indoor light, lifestyle, golden-hour street | street, travel, documentary, landscapes, architecture | daylight portraits, pastel scenes, fresh Japanese-style look |
+
+### Black-and-white styles (E1, E2)
+
+| | E1_Leica_Monochrom | E2_GR_IV_Monochrome |
+|---|---|---|
+| In one line | Leica M Monochrom: long, smooth tonal range, quiet and precise | Ricoh GR IV Monochrome "Solid" + built-in red filter: graphic street B&W |
+| Skin target L | 66 | 64 |
+| Contrast | gentle (profile S only), highlights −40, shadows +25 | hard S-curve, contrast +30, blacks −15, highlights −40 |
+| B&W mix | near neutral, skin slightly lifted | red filter: red/orange up, blue/aqua/green down |
+| Texture | micro-contrast (texture +10), very fine grain, slight vignette | clarity +20, light grain, darker corners |
+
+A style is black and white when its settings contain `"ConvertToGrayscale": true`. Then:
+- only `skin.L` is needed: exposure is calibrated on the face, **white balance stays as shot** (it only changes how
+  colours map to grey); `white` is not used and `--wb-from` is ignored;
+- raw files are switched to the **Adobe Monochrome** profile (a colour profile would override the B&W switch); a colour
+  style applied later puts the photo's own colour profile back (else Adobe Color);
+- the tones come from the B&W mix: `GrayMixerRed`, `GrayMixerOrange`, `GrayMixerYellow`, `GrayMixerGreen`,
+  `GrayMixerAqua`, `GrayMixerBlue`, `GrayMixerPurple`, `GrayMixerMagenta` (−100 – +100). A red filter is red/orange up,
+  blue/aqua/green down; a yellow filter is a milder version; a green filter lifts green and darkens red (skin).
 
 ## Add a style
 
