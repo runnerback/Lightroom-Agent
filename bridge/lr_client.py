@@ -280,7 +280,9 @@ class LrBridge:
     def export(self, dest, paths=None, collection=None, folder=None, selection=False, filter=None, timeout=3600, **opts):
         """opts: format=JPEG|TIFF|PSD|DNG|ORIGINAL, quality=90, long_edge=None, color_space=sRGB|AdobeRGB|ProPhotoRGB|DisplayP3,
         bit_depth, sharpen=True, sharpen_media=screen|matte|glossy, sharpen_level=1-3, metadata=all|allExceptCameraInfo|copyrightOnly,
-        keep_location=False, tokens='{{image_name}}', custom_text, collision=overwrite|skip|rename, raw_settings={...}"""
+        keep_location=False, tokens='{{image_name}}', custom_text, collision=overwrite|skip|rename, raw_settings={...};
+        preset='<title of a Lightroom export preset or .lrtemplate path>' uses that preset instead (only the destination
+        is replaced by dest)."""
         params = dict(dest=dest, filter=filter, **opts)
         if paths is not None:
             params['paths'] = list(paths)

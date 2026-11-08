@@ -578,6 +578,38 @@ function H.apply_develop(p)
   return { updated = updated, missing = missing, errors = errors }
 end
 
+-- Find a Lightroom export preset (.lrtemplate) by title, internal name, file name or path. Looks in the user's
+-- Lightroom presets folder and in "Lightroom Settings" next to the catalog (presets stored with the catalog).
+local function readExportPreset(cat, name)
+  local function parse(file)
+    local text = LrFileUtils.readFile(file)
+    local chunk = text and (loadstring or load)('local s\n' .. text .. '\nreturn s', '=preset')
+    if not chunk then return nil end
+    local ok, s = pcall(chunk)
+    if ok and type(s) == 'table' and type(s.value) == 'table' then return s end
+  end
+  if LrFileUtils.exists(name) == 'file' then return parse(name), name end
+  local roots = {}
+  local ok, appData = pcall(LrPathUtils.getStandardFilePath, 'appData')
+  if ok and appData then roots[#roots + 1] = LrPathUtils.child(appData, 'Export Presets') end
+  local settingsDir = LrPathUtils.child(LrPathUtils.parent(cat:getPath()), 'Lightroom Settings')
+  roots[#roots + 1] = LrPathUtils.child(settingsDir, 'Export Presets')
+  for _, root in ipairs(roots) do
+    if LrFileUtils.exists(root) == 'directory' then
+      for f in LrFileUtils.recursiveFiles(root) do
+        if LrPathUtils.extension(f) == 'lrtemplate' then
+          local s = parse(f)
+          if s and (s.title == name or s.internalName == name
+              or LrPathUtils.removeExtension(LrPathUtils.leafName(f)) == name) then
+            return s, f
+          end
+        end
+      end
+    end
+  end
+  error('export preset not found: ' .. tostring(name) .. ' (searched ' .. table.concat(roots, ', ') .. ')')
+end
+
 function H.export(p)
   local cat = catalog()
   if not p.dest then error('dest required') end
@@ -585,45 +617,62 @@ function H.export(p)
   if #photos == 0 then error('no photos matched') end
   LrFileUtils.createAllDirectories(p.dest)
 
-  local fmt = p.format or 'JPEG'
-  local longEdge = tonumber(p.long_edge)
-  local settings = {
-    LR_exportServiceProvider = 'com.adobe.ag.export.file',
-    LR_export_destinationType = 'specificFolder',
-    LR_export_destinationPathPrefix = p.dest,
-    LR_export_useSubfolder = false,
-    LR_collisionHandling = p.collision or 'overwrite',
-    LR_format = fmt,
-    LR_jpeg_quality = (tonumber(p.quality) or 90) / 100,
-    LR_jpeg_useLimitSize = false,
-    LR_export_colorSpace = p.color_space or 'sRGB',
-    LR_export_bitDepth = tonumber(p.bit_depth) or (fmt == 'TIFF' and 16 or 8),
-    LR_size_doConstrain = longEdge ~= nil,
-    LR_size_resizeType = 'longEdge',
-    LR_size_maxHeight = longEdge or 0,
-    LR_size_maxWidth = longEdge or 0,
-    LR_size_units = 'pixels',
-    LR_size_doNotEnlarge = true,
-    LR_size_resolution = 300,
-    LR_size_resolutionUnits = 'inch',
-    LR_outputSharpeningOn = p.sharpen ~= false,
-    LR_outputSharpeningMedia = p.sharpen_media or 'screen',
-    LR_outputSharpeningLevel = tonumber(p.sharpen_level) or 2,
-    LR_minimizeEmbeddedMetadata = false,
-    LR_embeddedMetadataOption = p.metadata or 'all',
-    LR_metadata_keywordOptions = 'lightroomHierarchical',
-    LR_removeLocationMetadata = p.keep_location ~= true,
-    LR_renamingTokensOn = p.tokens ~= nil,
-    LR_tokens = p.tokens or '{{image_name}}',
-    LR_tokenCustomString = p.custom_text or '',
-    LR_initialSequenceNumber = 1,
-    LR_reimportExportedPhoto = false,
-    LR_useWatermark = false,
-    LR_includeVideoFiles = false,
-    LR_export_postProcessing = 'doNothing',
-  }
-  if fmt == 'TIFF' then settings.LR_tiff_compressionMethod = 'compressionMethod_ZIP' end
-  if fmt == 'DNG' or fmt == 'ORIGINAL' then settings.LR_size_doConstrain = false end
+  local settings, presetTitle, presetFile
+  if p.preset then
+    -- The user's own export preset, with only the destination replaced (files go straight into dest) and no
+    -- "ask" dialog on name collisions.
+    local preset
+    preset, presetFile = readExportPreset(cat, p.preset)
+    presetTitle = preset.title
+    settings = {}
+    for k, v in pairs(preset.value) do settings['LR_' .. k] = v end
+    settings.LR_export_destinationType = 'specificFolder'
+    settings.LR_export_destinationPathPrefix = p.dest
+    settings.LR_export_useSubfolder = false
+    settings.LR_export_destinationPathSuffix = nil
+    settings.LR_collisionHandling = p.collision or 'overwrite'
+    settings.LR_reimportExportedPhoto = false
+  else
+    local fmt = p.format or 'JPEG'
+    local longEdge = tonumber(p.long_edge)
+    settings = {
+      LR_exportServiceProvider = 'com.adobe.ag.export.file',
+      LR_export_destinationType = 'specificFolder',
+      LR_export_destinationPathPrefix = p.dest,
+      LR_export_useSubfolder = false,
+      LR_collisionHandling = p.collision or 'overwrite',
+      LR_format = fmt,
+      LR_jpeg_quality = (tonumber(p.quality) or 90) / 100,
+      LR_jpeg_useLimitSize = false,
+      LR_export_colorSpace = p.color_space or 'sRGB',
+      LR_export_bitDepth = tonumber(p.bit_depth) or (fmt == 'TIFF' and 16 or 8),
+      LR_size_doConstrain = longEdge ~= nil,
+      LR_size_resizeType = 'longEdge',
+      LR_size_maxHeight = longEdge or 0,
+      LR_size_maxWidth = longEdge or 0,
+      LR_size_units = 'pixels',
+      LR_size_doNotEnlarge = true,
+      LR_size_resolution = 300,
+      LR_size_resolutionUnits = 'inch',
+      LR_outputSharpeningOn = p.sharpen ~= false,
+      LR_outputSharpeningMedia = p.sharpen_media or 'screen',
+      LR_outputSharpeningLevel = tonumber(p.sharpen_level) or 2,
+      LR_minimizeEmbeddedMetadata = false,
+      LR_embeddedMetadataOption = p.metadata or 'all',
+      LR_metadata_keywordOptions = 'lightroomHierarchical',
+      LR_removeLocationMetadata = p.keep_location ~= true,
+      LR_renamingTokensOn = p.tokens ~= nil,
+      LR_tokens = p.tokens or '{{image_name}}',
+      LR_tokenCustomString = p.custom_text or '',
+      LR_initialSequenceNumber = 1,
+      LR_reimportExportedPhoto = false,
+      LR_useWatermark = false,
+      LR_includeVideoFiles = false,
+      LR_export_postProcessing = 'doNothing',
+    }
+    if fmt == 'TIFF' then settings.LR_tiff_compressionMethod = 'compressionMethod_ZIP' end
+    if fmt == 'DNG' or fmt == 'ORIGINAL' then settings.LR_size_doConstrain = false end
+  end
   for k, v in pairs(p.raw_settings or {}) do settings[k] = v end
 
   local t0 = LrDate.currentTime()
@@ -637,7 +686,7 @@ function H.export(p)
   end
   table.sort(files)
   return {
-    requested = #photos, written = #files, dest = p.dest, files = files,
+    requested = #photos, written = #files, dest = p.dest, files = files, preset = presetTitle, preset_file = presetFile,
     missing = missing, seconds = LrDate.currentTime() - t0,
   }
 end

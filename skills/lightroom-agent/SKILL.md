@@ -121,6 +121,7 @@ describe the look in prose. Never put white balance, exposure or crop keys in a 
 ```bash
 lightroom-agent import /path/to/folder --collection "New shoot"     # add files in place
 lightroom-agent export --collection C --dest DIR --long-edge 2048     # only when the user asks
+lightroom-agent export --collection C --dest DIR --preset "export-1920"   # with the user's own Lightroom export preset
 lightroom-agent status
 ```
 

@@ -206,10 +206,12 @@ def import_photos(paths: list[str], collection: str = '') -> dict:
 
 @server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False,
                                          title='Export photos (only when the user asks)'))
-def export_photos(collection: str, dest: str, long_edge: int = 0, quality: int = 90) -> dict:
-    """Export a collection as JPEG into dest. Final exports are the user's decision: only call this when they ask."""
-    return _cli('export', '--collection', collection, '--dest', dest, *(['--long-edge', long_edge] if long_edge else []),
-                '--quality', quality, timeout=7200)
+def export_photos(collection: str, dest: str, long_edge: int = 0, quality: int = 90, preset: str = '') -> dict:
+    """Export a collection as JPEG into dest. Final exports are the user's decision: only call this when they ask.
+    preset: title of one of the user's Lightroom export presets; when given, its size/format/naming/metadata are used
+    (long_edge and quality are ignored) and only the destination is replaced by dest."""
+    opts = ['--preset', preset] if preset else [*(['--long-edge', long_edge] if long_edge else []), '--quality', quality]
+    return _cli('export', '--collection', collection, '--dest', dest, *opts, timeout=7200)
 
 
 def main():

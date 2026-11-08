@@ -13,7 +13,7 @@
   lightroom-agent rollback [STYLE] --collection C [--run DIR]         undo: to the original state, or to before STYLE
   lightroom-agent check-boxes STYLE --collection C [--run DIR]        QA sheet of the face patches used
   lightroom-agent import PATH... [--collection C]                     add files to the catalog in place
-  lightroom-agent export --collection C --dest DIR [--long-edge N]    (only when the user asks for it)
+  lightroom-agent export --collection C --dest DIR [--long-edge N | --preset NAME]   (only when the user asks)
   lightroom-agent install-plugin                 copy the Lightroom plugin into Lightroom's Modules folder
   lightroom-agent mcp                            run the MCP server on stdio
 
@@ -317,9 +317,10 @@ def cmd_import(args):
 
 
 def cmd_export(args):
+    opts = dict(preset=args.preset) if args.preset else dict(long_edge=args.long_edge, quality=args.quality)
     with LrBridge() as lr:
-        r = lr.export(os.path.abspath(args.dest), collection=args.collection, long_edge=args.long_edge, quality=args.quality)
-    summary({k: r[k] for k in ('requested', 'written', 'dest', 'seconds') if k in r})
+        r = lr.export(os.path.abspath(args.dest), collection=args.collection, collision=args.collision, **opts)
+    summary({k: r[k] for k in ('requested', 'written', 'dest', 'preset', 'preset_file', 'missing', 'seconds') if r.get(k)})
 
 
 def cmd_install_plugin(args):
@@ -379,6 +380,9 @@ def main(argv=None):
     p = sub.add_parser('import'); p.add_argument('paths', nargs='+'); p.add_argument('--collection'); p.add_argument('--set', default='Lightroom Agent')
     p = sub.add_parser('export'); p.add_argument('--collection', required=True); p.add_argument('--dest', required=True)
     p.add_argument('--long-edge', type=int); p.add_argument('--quality', type=int, default=90)
+    p.add_argument('--preset', help="use the user's Lightroom export preset (title or .lrtemplate path) instead of "
+                   '--long-edge/--quality; only its destination is replaced by --dest')
+    p.add_argument('--collision', choices=('overwrite', 'rename', 'skip'), default='overwrite')
     p = sub.add_parser('install-plugin'); p.add_argument('--modules', help='override the Lightroom Modules folder')
     sub.add_parser('mcp')
 
